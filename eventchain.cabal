@@ -1,0 +1,46 @@
+cabal-version:      3.0
+name:               eventchain
+version:            0.1.0.0
+synopsis:
+    Zero-trust provenance: hash-chained append-only event files,
+    verifiable offline
+description:
+    Open implementation of the EventChain protocol: an append-only
+    JSON-Lines file of hash-chained, identity-signed events that any
+    holder can verify locally — chain continuity (SHA-256), signature
+    validity (ECDSA-P256), payload commitments, and optional
+    OpenTimestamps temporal anchors — without contacting the
+    originating hub or any third party.
+
+    Protocol specification: <https://eventchain.heliosapp.run/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+tested-with:        GHC ==9.10.3 || ==9.12.4 || ==9.14.1
+extra-doc-files:
+    README.md
+    docs/protocol.md
+
+common warnings
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+common language
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+library
+    import:           warnings, language
+    hs-source-dirs:   src
+    exposed-modules:  EventChain
+    build-depends:    base >=4.20 && <5
