@@ -51,6 +51,9 @@ module EventChain.Crypto.Types
     , PayloadBytes
     , payloadBytes
     , payloadBytesRaw
+    , SignedBytes
+    , signedBytes
+    , signedBytesRaw
 
       -- * Hashes, by subject
     , LineHash
@@ -65,9 +68,6 @@ module EventChain.Crypto.Types
     , ClaimedKey
     , claimedKey
     , claimedKeyRaw
-    , PublicKey
-    , publicKeyClaim
-    , publicKeyRaw
     , Sig
     , sigFromRaw
     , sigRaw

@@ -1,20 +1,18 @@
-{- | P-256 keys and signatures, split by what has actually been proven
-about them.
+{- | P-256 keys and signatures, at the tier where nothing has been proven yet.
 
-A key read off a line is 33 bytes of the right shape — a t'ClaimedKey'.
-Whether those bytes decode to a point on P-256 is curve arithmetic, and
-curve arithmetic lives behind the FFI seam, so only "EventChain.Crypto"
-promotes a claim to a t'PublicKey'. Keeping the tiers apart is what lets
-the codec stay free of crypto: decoding a line must not cost a key load
-per line, which ADR-0004 forbids anyway (every FFI call is batched).
+A key read off a line is 33 bytes of the right shape — a t'ClaimedKey'. Whether
+those bytes decode to a point on P-256 is curve arithmetic, which lives behind
+the FFI seam, so @EventChain.Crypto@ owns both the promotion and the
+@PublicKey@ it produces: a fact type belongs to the module that makes it
+(ADR-0003 rule 8), and here that module is also the only one that /can/ make it.
+
+Keeping the tiers apart is what lets the codec stay free of crypto. Decoding a
+line must not cost a key load, and a key load is 14.95 µs — 44% of a verify.
 -}
 module EventChain.Crypto.Types.Internal.Key
     ( ClaimedKey (..)
     , claimedKey
     , claimedKeyRaw
-    , PublicKey (..)
-    , publicKeyClaim
-    , publicKeyRaw
     , Sig (..)
     , sigFromRaw
     , sigRaw
@@ -55,23 +53,6 @@ claimedKey bs = case BS.uncons bs of
 -- | The claimed point's bytes, for encoding or the crypto edge.
 claimedKeyRaw :: ClaimedKey -> ByteString
 claimedKeyRaw (ClaimedKey bs) = bs
-
-{- | A public key that is a point on P-256, proven so by
-"EventChain.Crypto", which is the only module that can build one.
-
-Wraps the claim it was promoted from: the fact is the claim plus the
-check that discharged it.
--}
-newtype PublicKey = PublicKey ClaimedKey
-    deriving stock (Eq, Ord, Show)
-
--- | The claim this key was promoted from.
-publicKeyClaim :: PublicKey -> ClaimedKey
-publicKeyClaim (PublicKey k) = k
-
--- | The key's compressed point bytes.
-publicKeyRaw :: PublicKey -> ByteString
-publicKeyRaw = claimedKeyRaw . publicKeyClaim
 
 {- | An ECDSA P-256 signature as raw @r‖s@: 64 bytes.
 

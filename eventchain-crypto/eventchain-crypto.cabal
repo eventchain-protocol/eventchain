@@ -19,9 +19,6 @@ description:
     implementations could reach those differently, so sharing them forfeits no
     evidence while keeping the memory-safety obligation in one place.
 
-    The batched libcrypto FFI these types exist to feed lands here next; it is
-    not present yet.
-
     Protocol specification: <https://eventchain.heliosapp.run/>
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -57,16 +54,70 @@ library
         -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
 
     exposed-modules:
+        EventChain.Crypto
         EventChain.Crypto.Types
 
     other-modules:
+        EventChain.Crypto.Internal.Digest
+        EventChain.Crypto.Internal.Ecdsa
+        EventChain.Crypto.Internal.Error
+        EventChain.Crypto.Internal.Foreign
         EventChain.Crypto.Types.Internal.Bytes
         EventChain.Crypto.Types.Internal.Error
         EventChain.Crypto.Types.Internal.Hash
         EventChain.Crypto.Types.Internal.Key
 
-    -- A seam, not a library. The system libcrypto arrives with the FFI, via
-    -- `pkgconfig-depends`; nothing else belongs on this list.
+    -- A seam, not a library. Nothing else belongs on this list.
     build-depends:
         , base       >=4.20 && <5
         , bytestring >=0.12 && <0.14
+
+    -- >=3.2 is where deterministic ECDSA (RFC 6979) lands; ADR-0004 depends on
+    -- it, so the floor is declared rather than hoped for. A stock Linux LTS
+    -- ships 3.0.x and will fail to solve here, which is the intent: the
+    -- alternative is signatures whose nonces come from somewhere we did not
+    -- choose. macOS: Homebrew's openssl@3 is keg-only, so PKG_CONFIG_PATH must
+    -- point at it (see the README).
+    pkgconfig-depends:  libcrypto >=3.2
+
+-- The kernels are graded by bytes we did not choose. `docs/plan.md` asked for
+-- OpenSSL CLI fixtures; those are the same libcrypto we call, so they prove
+-- wiring and not correctness. RFC 6979 and FIPS 180-2 publish the answers.
+--
+-- The properties are where the FFI marshalling is tested. A fuzzer was
+-- considered and rejected on evidence: AFL++ cannot instrument GHC's output,
+-- and ASan cannot see GHC's pinned heap, so neither reaches the code at risk.
+test-suite kat
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Main.hs
+    default-language:   GHC2024
+
+    -- Identical to the library's list on purpose: StrictData changes
+    -- evaluation, so a suite built without it exercises different code.
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Crypto.Hex
+        Test.EventChain.Crypto.Kat
+        Test.EventChain.Crypto.Properties
+
+    build-depends:
+        , base              >=4.20 && <5
+        , bytestring        >=0.12 && <0.14
+        , eventchain-crypto
+        , hedgehog          >=1.5  && <1.8
+        , tasty             >=1.5  && <1.6
+        , tasty-hedgehog    >=1.4  && <1.5
+        , tasty-hunit       >=0.10 && <0.11

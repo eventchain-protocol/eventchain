@@ -6,13 +6,23 @@ signature covers, and the bytes a payload commitment covers. They are
 distinct types, so a wrong pairing is a compile error rather than a
 silently valid-looking proof.
 
-Two of the three live here, and the third deliberately does not. Canonical
-bytes are a /format/ judgment, so each side canonicalizes for itself and each
-side's own @Canonical@ defines the type — the constructor is the claim that
-RFC 8785 ran, and this package is in no position to make it. Sharing a
-canonicalizer is what ADR-0005 forbids; sharing these two costs nothing,
-because a length and an encoding are not a decision two implementations could
-reach differently.
+All three live here, but the third arrives stripped of the one thing that
+matters about it, and that is the point. @CanonicalBytes@ is a /format/
+judgment: holding one is the claim that RFC 8785 ran, and this package — which
+owns no format logic — is in no position to make it. So each side canonicalizes
+for itself and each side's own @Canonical@ defines that type, as ADR-0005
+requires.
+
+t'SignedBytes' is what is left once that claim is spent: bytes a signature
+covers, asserting nothing about where they came from. The kernels need /a/ name
+for their message, because a domain quantity may not cross a module edge as a
+bare 'ByteString' (ADR-0003), and they cannot name either side's
+@CanonicalBytes@. Converting one into the other is a deliberate step at the
+crypto edge — the guarantee stays upstream, where only a @Canonical@ can produce
+the @CanonicalBytes@ that step consumes.
+
+Sharing these costs nothing: a length, an encoding, and "these are the bytes"
+are not decisions two implementations could reach differently.
 -}
 module EventChain.Crypto.Types.Internal.Bytes
     ( LineBytes (..)
@@ -21,6 +31,9 @@ module EventChain.Crypto.Types.Internal.Bytes
     , PayloadBytes (..)
     , payloadBytes
     , payloadBytesRaw
+    , SignedBytes (..)
+    , signedBytes
+    , signedBytesRaw
     ) where
 
 import Data.ByteString (ByteString)
@@ -78,3 +91,31 @@ payloadBytes = PayloadBytes
 -- | The payload's bytes, for hashing.
 payloadBytesRaw :: PayloadBytes -> ByteString
 payloadBytesRaw (PayloadBytes bs) = bs
+
+{- | The exact bytes a signature covers.
+
+A label, and deliberately nothing more. Whether these bytes are the RFC 8785
+serialization of an entry minus its @signature@ member is a claim each side's own
+@Canonical@ makes and this package cannot check — so this type does not pretend
+to. What it buys is that "the message" is a domain quantity with a name, rather
+than a 'ByteString' that could be any of the three byte strings above.
+
+Both Kinds of signed message pass through here: the Producer's canonical bytes,
+and a Mint's @authenticatorData || SHA-256(clientDataJSON)@, which is a different
+construction the kernels have no opinion about either.
+-}
+newtype SignedBytes = SignedBytes ByteString
+    deriving stock (Eq, Show)
+
+{- | Name some bytes as a signing message; there is no shape to violate.
+
+Fabricating these is not a hole this type could plug: signing bytes of your
+choosing is possible with any signature API, and what stops it mattering is that
+a verifier derives its message from the line rather than accepting one.
+-}
+signedBytes :: ByteString -> SignedBytes
+signedBytes = SignedBytes
+
+-- | The message's bytes, for the crypto edge.
+signedBytesRaw :: SignedBytes -> ByteString
+signedBytesRaw (SignedBytes bs) = bs
