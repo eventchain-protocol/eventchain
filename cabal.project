@@ -18,3 +18,17 @@ packages:
     eventchain
     eventchain-verify
     gates
+
+-- Without this, `cabal test all` runs the two gates and silently skips `kat` and
+-- `conformance` -- the suites that grade the code. This flag is what the solver
+-- reads; naming a test suite on the command line is not, so test-only
+-- dependencies (hedgehog, tasty, process, temporary) never enter the install
+-- plan and cabal reports the suite "not available" and moves on, exit code 0.
+-- The gates escaped that only because aeson already arrives via
+-- `eventchain-verify`'s library, which is luck rather than design.
+--
+-- So the paragraph at the top of this file was true of the gates and false of
+-- everything else: M1's known answers and M2's OpenSSL gate had only ever run
+-- by hand, and a fresh clone running `cabal test all` saw two structural checks
+-- and no behaviour.
+tests: True
