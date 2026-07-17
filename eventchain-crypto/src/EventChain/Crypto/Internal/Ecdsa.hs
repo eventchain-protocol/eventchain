@@ -18,17 +18,33 @@ discharged it, and here the check leaves an artifact worth keeping.
 
 Sharing one across threads is measured at 7.8× on 8 threads with no contention,
 and libcrypto's own contract says why: "A given object may be used concurrently on
-multiple threads by non-mutating functions", and @EVP_DigestVerifyInit@ "does not
-mutate pkey". The @EVP_MD_CTX@ is the mutable part, so each verify makes its own —
-which costs 1.8%, measured, and is the price of a rule that reads "Contexts MUST
-NOT be shared between threads".
+multiple threads by non-mutating functions", and verification never mutates the
+key. The mutable state is the @EVP_PKEY_CTX@, which each batch builds for itself
+inside the call — the price of a rule that reads "Contexts MUST NOT be shared
+between threads", paid once per run of the same key rather than once per line.
+
+== Why verify takes a digest
+
+@EVP_DigestVerify@ hashes the message itself, and charges for the convenience:
+it is one-shot — one init per verify — and every init fetches SHA-256 by name
+and builds a fresh internal @EVP_PKEY_CTX@, per-line costs on a 34 µs kernel.
+@EVP_PKEY_verify@ inverts the shape. The context is initialized once and then
+"can be called more than once on the same context to have several one-shot
+operations performed using the same parameters" (@EVP_PKEY_verify(3ssl)@).
+What it wants in exchange is the digest rather than the message — and the
+digest is SHA-256, which this package already computes at GB/s in batch. So
+the chunk prehashes its messages through the hashing kernel and hands the
+curve math 32-byte values.
 
 == Why DER never leaves
 
 The AOF carries raw 64-byte @r‖s@ (ADR-0002). libcrypto speaks DER at both ends:
 it emits DER when signing and demands DER when verifying. Both conversions happen
 here, which is what "@eventchain-crypto@ normalizes it away at those two sources"
-means. The cost is 0.46 µs, 1.4% of a verify.
+means. They are not symmetric: signing, once per append, decodes libcrypto's DER
+through libcrypto's own @d2i@; verification, per line at scale, /encodes/ DER in
+pure Haskell ('sigToDer'), because the grammar is two integers in a sequence and
+the FFI detour it replaced was most of a verify's non-curve cost.
 -}
 module EventChain.Crypto.Internal.Ecdsa
     ( -- * Keys
@@ -52,6 +68,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BSI
 import Data.ByteString.Unsafe qualified as BSU
+import EventChain.Crypto.Internal.Digest (digestChunk)
 import EventChain.Crypto.Internal.Error (CryptoError (..))
 import EventChain.Crypto.Internal.Foreign
 import EventChain.Crypto.Types.Internal.Bytes (SignedBytes, signedBytesRaw)
@@ -304,12 +321,14 @@ sign (PrivateKey pkey _) message = unsafePerformIO $ do
 
 {- | Verify a chunk of (key, message, signature) triples.
 
-Takes a chunk because ADR-0004 says the kernel API does. The chunk buys less here
-than it does for hashing — an @EVP_MD_CTX@ per verify measures at 1.8%, and the
-key, which is what actually costs, is already loaded. What a chunk does buy is a
-shape the caller can parallelise over: signature checks dominate wall-clock at
-scale, and one shared t'PublicKey' across a worker pool is measured at 7.8× on 8
-threads.
+Takes a chunk because ADR-0004 says the kernel API does, and here the chunk pays
+twice. The messages are prehashed through the batched SHA-256 kernel — a few
+hundred nanoseconds a line against 34 µs of curve math. And the verification
+context is built once per /run/ of the same key rather than once per line (see
+the module header): an AOF is mostly runs of one Producer's key, so what a line
+pays is the verify itself. The chunk is also a shape the caller can parallelise
+over: signature checks dominate wall-clock at scale, and one shared t'PublicKey'
+across a worker pool is measured at 7.8× on 8 threads.
 
 Fails wholesale on a malfunction rather than per entry. libcrypto failing to
 answer is not a fact about any one line, and reporting it as 'SigInvalid' would
@@ -319,74 +338,83 @@ verifyBatch :: [(PublicKey, SignedBytes, Sig)] -> Either CryptoError [SigCheck]
 verifyBatch [] = Right []
 verifyBatch triples = unsafePerformIO $ do
     c_ERR_clear_error
-    ctx <- newMdCtx
-    withForeignPtr ctx $ \c -> traverseEither (verifyOne c) triples
+    let digests = digestChunk [signedBytesRaw m | (_, m, _) <- triples]
+    go Nothing [] (zip triples digests)
+  where
+    go _ acc [] = pure (Right (reverse acc))
+    go cache acc (((PublicKey pkey _, _, signature), digest) : rest) = do
+        keyed <- case cache of
+            Just hit@(k, _) | k == pkey -> pure (Right hit)
+            _ -> fmap ((,) pkey) <$> verifyContext pkey
+        case keyed of
+            Left err -> pure (Left err)
+            Right hit@(_, pctx) ->
+                verifyOne pctx digest signature >>= \case
+                    Left err -> pure (Left err)
+                    Right answer -> go (Just hit) (answer : acc) rest
 {-# NOINLINE verifyBatch #-}
 
-verifyOne :: Ptr EVP_MD_CTX -> (PublicKey, SignedBytes, Sig) -> IO (Either CryptoError SigCheck)
-verifyOne ctx (PublicKey pkey _, message, signature) = do
-    converted <- rawToDer (sigRaw signature)
-    case converted of
-        Left err -> pure (Left err)
-        Right der -> withForeignPtr pkey $ \k -> do
-            ok <- withCString "SHA256" $ \md -> c_EVP_DigestVerifyInit_ex ctx nullPtr md nullPtr nullPtr k nullPtr
-            if ok /= 1
-                then Left <$> openSslFailed
-                else BSU.unsafeUseAsCStringLen der $ \(d, dlen) ->
-                    BSU.unsafeUseAsCStringLen (signedBytesRaw message) $ \(m, mlen) -> do
-                        r <- c_EVP_DigestVerify ctx (castPtr d) (fromIntegral dlen) (castPtr m) (fromIntegral mlen)
-                        -- 1 valid, 0 invalid, negative a malfunction. Three outcomes.
-                        case r of
-                            1 -> pure (Right SigValid)
-                            0 -> c_ERR_clear_error >> pure (Right SigInvalid)
-                            _ -> Left <$> openSslFailed
+{- | An initialized verification context for one key: the once-per-run cost.
+
+The key's refcount protects the borrow — @EVP_PKEY_CTX_new_from_pkey@ takes its
+own reference, so the context cannot outlive the key it watches.
+-}
+verifyContext :: ForeignPtr EVP_PKEY -> IO (Either CryptoError (ForeignPtr EVP_PKEY_CTX))
+verifyContext pkey = do
+    pctx <-
+        own
+            "EVP_PKEY_CTX_new_from_pkey"
+            (withForeignPtr pkey $ \k -> c_EVP_PKEY_CTX_new_from_pkey nullPtr k nullPtr)
+            p_EVP_PKEY_CTX_free
+    ok <- withForeignPtr pctx $ \c -> c_EVP_PKEY_verify_init_ex c nullPtr
+    if ok /= 1
+        then Left <$> openSslFailed
+        else pure (Right pctx)
+
+verifyOne :: ForeignPtr EVP_PKEY_CTX -> ByteString -> Sig -> IO (Either CryptoError SigCheck)
+verifyOne pctx digest signature =
+    withForeignPtr pctx $ \c ->
+        BSU.unsafeUseAsCStringLen (sigToDer signature) $ \(d, dlen) ->
+            BSU.unsafeUseAsCStringLen digest $ \(t, tlen) -> do
+                r <- c_EVP_PKEY_verify c (castPtr d) (fromIntegral dlen) (castPtr t) (fromIntegral tlen)
+                -- 1 valid, 0 invalid (malformed DER included), negative a malfunction.
+                case r of
+                    1 -> pure (Right SigValid)
+                    0 -> c_ERR_clear_error >> pure (Right SigInvalid)
+                    _ -> Left <$> openSslFailed
 
 -- Conversions ----------------------------------------------------------------
 
-{- | Raw @r‖s@ to the DER libcrypto demands.
+{- | A t'Sig' as the DER @ECDSA-Sig-Value@ libcrypto demands.
 
-Ownership is the subtle part: @ECDSA_SIG_set0@ /takes/ both bignums on success, so
-they must not also carry finalizers — that would free them twice. They are freed
-by hand on the paths before the transfer, and by the signature's finalizer after
-it. The whole sequence sits under 'mask_' so no abort can land between an
-allocation and the thing that will own it.
+Encoded here, in Haskell, rather than through @ECDSA_SIG_set0@ and
+@i2d_ECDSA_SIG@: the grammar is @SEQUENCE { INTEGER r, INTEGER s }@ and nothing
+else, and the FFI construction it replaced — two bignums, an @ECDSA_SIG@, a
+finalizer, six calls — was most of verification's non-curve cost, per line.
+Total by construction: a t'Sig' is 64 bytes, so each INTEGER body is at most 33
+bytes and the SEQUENCE body at most 70, inside DER's short length form. The
+graded KATs cover it: the RFC 6979 vectors verify through this encoding.
 -}
-rawToDer :: ByteString -> IO (Either CryptoError ByteString)
-rawToDer raw
-    | BS.length raw /= rawSigLength = pure (Left SigOutOfRange)
-    | otherwise = mask_ $ do
-        r <- bin2bn (BS.take 32 raw)
-        s <- bin2bn (BS.drop 32 raw)
-        if r == nullPtr || s == nullPtr
-            then do
-                when (r /= nullPtr) (c_BN_free r)
-                when (s /= nullPtr) (c_BN_free s)
-                Left <$> openSslFailed
-            else do
-                sig <- c_ECDSA_SIG_new
-                if sig == nullPtr
-                    then c_BN_free r >> c_BN_free s >> (Left <$> openSslFailed)
-                    else do
-                        ok <- c_ECDSA_SIG_set0 sig r s
-                        if ok /= 1
-                            then do
-                                c_BN_free r
-                                c_BN_free s
-                                c_ECDSA_SIG_free sig
-                                Left <$> openSslFailed
-                            else do
-                                -- sig owns r and s from here.
-                                owned <- newForeignPtr p_ECDSA_SIG_free sig
-                                withForeignPtr owned $ \sp -> do
-                                    len <- c_i2d_ECDSA_SIG sp nullPtr
-                                    if len <= 0
-                                        then Left <$> openSslFailed
-                                        else do
-                                            der <- BSI.create (fromIntegral len) $ \out ->
-                                                with out $ \pp -> do
-                                                    n <- c_i2d_ECDSA_SIG sp pp
-                                                    when (n <= 0) $ error "EventChain.Crypto: i2d_ECDSA_SIG failed after sizing."
-                                            pure (Right der)
+sigToDer :: Sig -> ByteString
+sigToDer signature =
+    BS.concat [BS.pack [0x30, fromIntegral (BS.length r + BS.length s)], r, s]
+  where
+    raw = sigRaw signature
+    r = derUnsigned (BS.take 32 raw)
+    s = derUnsigned (BS.drop 32 raw)
+
+{- | A 32-byte big-endian unsigned value as a DER INTEGER: stripped to the
+minimal encoding, a zero byte restored where the top bit would read as a sign,
+and zero itself a single zero byte.
+-}
+derUnsigned :: ByteString -> ByteString
+derUnsigned be = BS.concat [BS.pack [0x02, fromIntegral (BS.length body)], body]
+  where
+    stripped = BS.dropWhile (== 0x00) be
+    body
+        | BS.null stripped = BS.singleton 0x00
+        | BS.head stripped >= 0x80 = BS.cons 0x00 stripped
+        | otherwise = stripped
 
 {- | The DER libcrypto emits back to raw @r‖s@.
 
@@ -494,13 +522,3 @@ withNamed = withCString
 -- | Drain the error queue into a 'CryptoError'.
 openSslFailed :: IO CryptoError
 openSslFailed = OpenSslFailed . fromIntegral <$> c_ERR_get_error
-
--- | 'traverse' that stops at the first 'Left', without pulling in a transformer.
-traverseEither :: (a -> IO (Either e b)) -> [a] -> IO (Either e [b])
-traverseEither f = go []
-  where
-    go acc [] = pure (Right (reverse acc))
-    go acc (x : xs) =
-        f x >>= \case
-            Left e -> pure (Left e)
-            Right y -> go (y : acc) xs

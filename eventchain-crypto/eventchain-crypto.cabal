@@ -121,3 +121,28 @@ test-suite kat
         , tasty             >=1.5  && <1.6
         , tasty-hedgehog    >=1.4  && <1.5
         , tasty-hunit       >=0.10 && <0.11
+
+-- Recorded, not asserted: throughput is a property of the machine. See the
+-- module header.
+benchmark bench
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     bench
+    main-is:            Main.hs
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    -- No -O2: the library ships at cabal's default -O1, so measuring the
+    -- benchmark's own loop at -O2 would measure something no caller gets.
+    -- -rtsopts so `+RTS -s` can show the allocation profile alongside the
+    -- throughput; it changes nothing unless RTS flags are passed.
+    ghc-options:        -Wall -threaded -rtsopts
+    build-depends:
+        , base              >=4.20 && <5
+        , bytestring        >=0.12 && <0.14
+        , eventchain-crypto
+        , time              >=1.12 && <1.15

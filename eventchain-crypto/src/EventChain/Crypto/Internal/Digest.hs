@@ -26,6 +26,7 @@ loudly, once, at first use.
 module EventChain.Crypto.Internal.Digest
     ( hashLines
     , hashPayloads
+    , digestChunk
     ) where
 
 import Control.Exception (mask_)
@@ -34,14 +35,16 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BSI
 import Data.ByteString.Unsafe qualified as BSU
+import Data.Coerce (coerce)
+import Data.Word (Word8)
 import EventChain.Crypto.Internal.Foreign
-import EventChain.Crypto.Types.Internal.Bytes (LineBytes, PayloadBytes, lineBytesRaw, payloadBytesRaw)
+import EventChain.Crypto.Types.Internal.Bytes (LineBytes (..), PayloadBytes (..))
 import EventChain.Crypto.Types.Internal.Hash (LineHash (..), PayloadHash (..), sha256Length)
 import Foreign.C.String (withCString)
 import Foreign.C.Types (CInt, CUInt)
-import Foreign.ForeignPtr (ForeignPtr, newForeignPtr, withForeignPtr)
+import Foreign.ForeignPtr (ForeignPtr, mallocForeignPtrBytes, newForeignPtr, withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import System.IO.Unsafe (unsafePerformIO)
 
 {- | The SHA-256 algorithm object, fetched once for the life of the process.
@@ -82,15 +85,33 @@ safeUpdateThreshold = 4096
 
 -- | SHA-256 of each Entry's line bytes. The digests are independent; only the caller's chain is not.
 hashLines :: [LineBytes] -> [LineHash]
-hashLines = map LineHash . digestChunk . map lineBytesRaw
+hashLines = coerce digestChunk
 
 -- | SHA-256 of each Payload's content.
 hashPayloads :: [PayloadBytes] -> [PayloadHash]
-hashPayloads = map PayloadHash . digestChunk . map payloadBytesRaw
+hashPayloads = coerce digestChunk
 
-{- | The kernel: one context and one algorithm, reused down the chunk.
+{- | The kernel: one context, one algorithm, and one output buffer, reused down
+the chunk.
 
-The context is reset per item rather than rebuilt, which is the whole point.
+The context is reset per item rather than rebuilt, and every digest in the
+chunk is a 32-byte slice of a single pinned buffer rather than its own pinned
+allocation. Measured on this project's dev machine, the per-line allocations
+were the difference between 1.4 GB/s and the C loop's neighborhood — a pinned
+allocation is a locked-heap operation, and 300 ns of hashing cannot absorb two
+of them.
+
+The cost of sharing: any one digest retains the whole chunk's buffer, 32 bytes
+per input. A caller keeping one hash from a million-line chunk holds 32 MB.
+That caller exists only in pathology — every real consumer keeps all the
+digests or none — and the batch API already told callers the chunk is the unit.
+
+Exported raw — bare 'ByteString's in, bare out — for exactly one caller
+outside this module: the signature kernel prehashes its messages here, because
+@EVP_PKEY_verify@ takes a digest and this is the digest at full speed. That is
+the crypto edge where domain quantities are already unwrapped (ADR-0003's
+sanctioned boundary); everything further out goes through 'hashLines' and
+'hashPayloads'.
 -}
 digestChunk :: [ByteString] -> [ByteString]
 digestChunk [] = []
@@ -99,13 +120,23 @@ digestChunk inputs = unsafePerformIO $ do
         p <- c_EVP_MD_CTX_new
         when (p == nullPtr) $ error "EventChain.Crypto: EVP_MD_CTX_new failed (out of memory)."
         newForeignPtr p_EVP_MD_CTX_free p
+    out <- mallocForeignPtrBytes (length inputs * sha256Length)
     withForeignPtr sha256 $ \md ->
         withForeignPtr ctx $ \c ->
-            mapM (digestOne c md) inputs
+            withForeignPtr out $ \base ->
+                alloca $ \lenPtr ->
+                    let go !off = \case
+                            [] -> pure []
+                            input : rest -> do
+                                digestOne c md lenPtr (base `plusPtr` off) input
+                                let !digest = BSI.fromForeignPtr out off sha256Length
+                                rest' <- go (off + sha256Length) rest
+                                pure (digest : rest')
+                     in go 0 inputs
 
--- | One digest into a freshly allocated, Haskell-owned 32 bytes.
-digestOne :: Ptr EVP_MD_CTX -> Ptr EVP_MD -> ByteString -> IO ByteString
-digestOne ctx md input = do
+-- | One digest into the chunk's buffer, at the offset the caller owns.
+digestOne :: Ptr EVP_MD_CTX -> Ptr EVP_MD -> Ptr CUInt -> Ptr Word8 -> ByteString -> IO ()
+digestOne ctx md lenPtr out input = do
     ok <- c_EVP_DigestInit_ex2 ctx md nullPtr
     check "EVP_DigestInit_ex2" ok
 
@@ -114,11 +145,7 @@ digestOne ctx md input = do
             let update = if len < safeUpdateThreshold then c_EVP_DigestUpdate else c_EVP_DigestUpdate_safe
             check "EVP_DigestUpdate" =<< update ctx (castPtr p) (fromIntegral len)
 
-    -- The output buffer is ours, and C only fills it: bytestring's own shape for
-    -- exactly this, and the reason no C allocation is involved in the answer.
-    BSI.create sha256Length $ \out ->
-        alloca $ \lenPtr -> do
-            check "EVP_DigestFinal_ex" =<< c_EVP_DigestFinal_ex ctx out (lenPtr :: Ptr CUInt)
+    check "EVP_DigestFinal_ex" =<< c_EVP_DigestFinal_ex ctx out lenPtr
 
 {- | libcrypto returning 0 from a digest call is a malfunction, not a verdict.
 

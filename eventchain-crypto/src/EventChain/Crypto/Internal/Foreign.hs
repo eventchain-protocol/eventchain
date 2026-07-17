@@ -77,25 +77,20 @@ module EventChain.Crypto.Internal.Foreign
     , ConstBignum
     , c_BN_bin2bn
     , c_BN_bn2binpad
-    , c_BN_free
     , p_BN_free
 
       -- * Signing and verification
     , c_EVP_DigestSignInit_ex
     , c_EVP_DigestSign
-    , c_EVP_DigestVerifyInit_ex
-    , c_EVP_DigestVerify
+    , c_EVP_PKEY_verify_init_ex
+    , c_EVP_PKEY_verify
 
       -- * DER signatures
     , ECDSA_SIG
     , ConstBytes (..)
-    , c_ECDSA_SIG_new
-    , c_ECDSA_SIG_free
     , p_ECDSA_SIG_free
-    , c_ECDSA_SIG_set0
     , c_ECDSA_SIG_get0_r
     , c_ECDSA_SIG_get0_s
-    , c_i2d_ECDSA_SIG
     , c_d2i_ECDSA_SIG
 
       -- * Deriving a public point
@@ -326,9 +321,6 @@ borrowed from a t'ECDSA_SIG'.
 foreign import capi unsafe "openssl/bn.h BN_bn2binpad"
     c_BN_bn2binpad :: Ptr ConstBignum -> Ptr Word8 -> CInt -> IO CInt
 
-foreign import capi unsafe "openssl/bn.h BN_free"
-    c_BN_free :: Ptr BIGNUM -> IO ()
-
 foreign import capi "openssl/bn.h &BN_free"
     p_BN_free :: FinalizerPtr BIGNUM
 
@@ -356,48 +348,42 @@ foreign import capi safe "openssl/evp.h EVP_DigestSignInit_ex"
 foreign import capi safe "openssl/evp.h EVP_DigestSign"
     c_EVP_DigestSign :: Ptr EVP_MD_CTX -> Ptr Word8 -> Ptr CSize -> Ptr Word8 -> CSize -> IO CInt
 
-foreign import capi safe "openssl/evp.h EVP_DigestVerifyInit_ex"
-    c_EVP_DigestVerifyInit_ex
-        :: Ptr EVP_MD_CTX
-        -> Ptr (Ptr EVP_PKEY_CTX)
-        -> CString
-        -> Ptr ()
-        -> CString
-        -> Ptr EVP_PKEY
-        -> Ptr OSSL_PARAM
-        -> IO CInt
+{- | Prepare an @EVP_PKEY_CTX@ for repeated one-shot verifies.
+
+The reuse is contractual, not observed: "When initialized using
+EVP_PKEY_verify_init_ex() ... EVP_PKEY_verify() can be called more than once on
+the same context to have several one-shot operations performed using the same
+parameters" (@EVP_PKEY_verify(3ssl)@, shipped with 3.6.2; the function is 3.0+,
+inside our 3.2 floor). That sentence is what lets a chunk pay for initialization
+once per signer run instead of once per line — @EVP_DigestVerify@, the
+alternative, is one-shot per init and re-fetches its digest by name every time.
+-}
+foreign import capi safe "openssl/evp.h EVP_PKEY_verify_init_ex"
+    c_EVP_PKEY_verify_init_ex :: Ptr EVP_PKEY_CTX -> Ptr OSSL_PARAM -> IO CInt
 
 {- | ~34µs — the hot kernel, and the reason a key is loaded once and reused.
 
-Returns 1 for a valid signature, 0 for an invalid one, and negative for a
+Takes the /digest/ of the message, not the message: the EC provider treats @tbs@
+as the value ECDSA signs, so the caller hashes first — through the same batched
+SHA-256 kernel the chain walk uses.
+
+Returns 1 for a valid signature, 0 for an invalid one — including "the
+signature was of invalid form" (@EVP_PKEY_verify(3ssl)@) — and negative for a
 malfunction. Those are three outcomes, not two.
 -}
-foreign import capi safe "openssl/evp.h EVP_DigestVerify"
-    c_EVP_DigestVerify :: Ptr EVP_MD_CTX -> Ptr Word8 -> CSize -> Ptr Word8 -> CSize -> IO CInt
+foreign import capi safe "openssl/evp.h EVP_PKEY_verify"
+    c_EVP_PKEY_verify :: Ptr EVP_PKEY_CTX -> Ptr Word8 -> CSize -> Ptr Word8 -> CSize -> IO CInt
 
 -- DER signatures ------------------------------------------------------------
 
-foreign import capi unsafe "openssl/ecdsa.h ECDSA_SIG_new"
-    c_ECDSA_SIG_new :: IO (Ptr ECDSA_SIG)
-
-foreign import capi unsafe "openssl/ecdsa.h ECDSA_SIG_free"
-    c_ECDSA_SIG_free :: Ptr ECDSA_SIG -> IO ()
-
 foreign import capi "openssl/ecdsa.h &ECDSA_SIG_free"
     p_ECDSA_SIG_free :: FinalizerPtr ECDSA_SIG
-
--- | Takes ownership of both bignums on success. They must not be freed again.
-foreign import capi unsafe "openssl/ecdsa.h ECDSA_SIG_set0"
-    c_ECDSA_SIG_set0 :: Ptr ECDSA_SIG -> Ptr BIGNUM -> Ptr BIGNUM -> IO CInt
 
 foreign import capi unsafe "openssl/ecdsa.h ECDSA_SIG_get0_r"
     c_ECDSA_SIG_get0_r :: Ptr ECDSA_SIG -> IO (Ptr ConstBignum)
 
 foreign import capi unsafe "openssl/ecdsa.h ECDSA_SIG_get0_s"
     c_ECDSA_SIG_get0_s :: Ptr ECDSA_SIG -> IO (Ptr ConstBignum)
-
-foreign import capi unsafe "openssl/ecdsa.h i2d_ECDSA_SIG"
-    c_i2d_ECDSA_SIG :: Ptr ECDSA_SIG -> Ptr (Ptr Word8) -> IO CInt
 
 foreign import capi unsafe "openssl/ecdsa.h d2i_ECDSA_SIG"
     c_d2i_ECDSA_SIG :: Ptr (Ptr ECDSA_SIG) -> Ptr ConstBytes -> CLong -> IO (Ptr ECDSA_SIG)
