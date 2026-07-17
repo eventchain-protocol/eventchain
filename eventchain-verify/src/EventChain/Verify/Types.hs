@@ -22,8 +22,14 @@ go away would pass every test and destroy the evidence the tests are for.
 
 Constructors are unexported throughout. Fields are readable — a claim is not a
 secret, and any claim at all can be fabricated by writing a file and decoding
-it — but an Entry comes into being only in "EventChain.Verify.Wire", which is
-also the only place a t'DecodedEntry' pairing is made.
+it — but an Entry comes into being only in "EventChain.Verify.Wire".
+
+The pairing of a line's bytes with what was parsed from them is /not/ here: it
+lives in "EventChain.Verify.Wire" with the code that makes it, per rule 8 of
+@docs/plan.md@. A type whose meaning is "this pair was built from one line by
+the codec" has to have its constructor unexported from the module that reads the
+line, or "sole constructor" is a convention rather than a guarantee. M0 parked it
+here because the codec did not exist yet.
 
 Note the omission: no @ToJSON@ or @FromJSON@ instances. A derived instance
 would be a second serialization path silently bypassing the exact-bytes
@@ -40,9 +46,6 @@ module EventChain.Verify.Types
     , ProducedProof (publicKey, signature)
     , EntryKind (..)
     , Entry (entryId, payloadHash, payloadRef, prevHash, producedProof, kind)
-    , DecodedEntry
-    , decodedLine
-    , decodedEntry
     , ChainPosition
     , chainPositionIndex
 

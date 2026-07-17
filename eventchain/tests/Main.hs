@@ -12,6 +12,7 @@ module Main (main) where
 import Test.EventChain.Canonical qualified as Canonical
 import Test.EventChain.EntryObject qualified as EntryObject
 import Test.EventChain.Produce qualified as Produce
+import Test.EventChain.Vectors qualified as Vectors
 import Test.EventChain.Wire qualified as Wire
 import Test.Tasty (defaultMain, testGroup)
 
@@ -24,4 +25,5 @@ main =
             , Canonical.tests
             , Wire.tests
             , Produce.tests
+            , Vectors.tests
             ]

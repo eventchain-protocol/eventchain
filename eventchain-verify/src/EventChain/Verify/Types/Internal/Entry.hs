@@ -16,9 +16,6 @@ module EventChain.Verify.Types.Internal.Entry
     , ProducedProof (..)
     , EntryKind (..)
     , Entry (..)
-    , DecodedEntry (..)
-    , decodedLine
-    , decodedEntry
     , ChainPosition (..)
     , chainPosition
     , chainPositionIndex
@@ -26,7 +23,7 @@ module EventChain.Verify.Types.Internal.Entry
 
 import Data.Text (Text)
 import Data.Word (Word64)
-import EventChain.Crypto.Types (ClaimedKey, LineBytes, LineHash, PayloadHash, Sig)
+import EventChain.Crypto.Types (ClaimedKey, LineHash, PayloadHash, Sig)
 import EventChain.Verify.Types.Internal.Attestation (Attestation)
 
 {- | A producer-chosen label for an Entry, e.g. @evt-042@.
@@ -118,29 +115,6 @@ data Entry = Entry
     , kind :: EntryKind
     }
     deriving stock (Eq, Show)
-
-{- | A line's bytes together with the Entry parsed from them.
-
-Fully opaque, and the pairing is the reason: the chain commits to line
-bytes, so verification must hash the bytes an Entry was actually read
-from. A pair whose two halves disagree would let a line say one thing
-while the parsed view says another, and verification would bless it.
-"EventChain.Verify.Wire" is the only place a pair is made, and nothing can
-take one apart and put a different one back together.
--}
-data DecodedEntry = DecodedEntry
-    { line :: LineBytes
-    , entry :: Entry
-    }
-    deriving stock (Eq, Show)
-
--- | The bytes this Entry was read from — what the chain commits to.
-decodedLine :: DecodedEntry -> LineBytes
-decodedLine (DecodedEntry ln _) = ln
-
--- | The Entry parsed from the line.
-decodedEntry :: DecodedEntry -> Entry
-decodedEntry (DecodedEntry _ e) = e
 
 {- | An Entry's ordinal in the AOF, counted from zero at the genesis entry.
 

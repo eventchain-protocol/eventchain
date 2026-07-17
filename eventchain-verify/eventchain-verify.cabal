@@ -51,7 +51,11 @@ library
         -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
 
     exposed-modules:
+        EventChain.Verify
+        EventChain.Verify.Canonical
+        EventChain.Verify.EntryObject
         EventChain.Verify.Types
+        EventChain.Verify.Wire
 
     other-modules:
         EventChain.Verify.Types.Internal.Attestation
@@ -59,10 +63,77 @@ library
 
     -- `eventchain` is absent and must stay absent: that edge's absence is the
     -- gate (gates:verifier-independence, which walks the resolved install plan,
-    -- so adding it through a third package fails too). aeson, base64, webauthn,
-    -- unliftio and zlib arrive with the codec and the folds.
+    -- so adding it through a third package fails too). webauthn arrives with the
+    -- mint envelope at M4; unliftio and zlib with parallel verification and gzip.
+    --
+    -- aeson is here as the *tokenizer* and never as `decode`. That is a
+    -- correctness decision: `Data.Aeson.Decoding.Conversion` documents that "the
+    -- first duplicate key in objects wins", so `decode` would read a line
+    -- carrying two `prev_hash` members as one of them arbitrarily -- the exact
+    -- ambiguity the format must reject. `Data.Aeson.Decoding.Tokens` preserves
+    -- both, so the duplicate is fatal. `Data.Aeson.RFC8785` is the JCS oracle and
+    -- this library may never import it (gates:no-jcs-oracle-import): the grader
+    -- is not the graded.
+    --
+    -- `base64` earns its stated justification here and only here. It was picked
+    -- for being typed and rejecting non-canonical input, which is a property of
+    -- its decoders -- and this is the side that decodes.
     build-depends:
+        , aeson             >=2.3  && <2.4
         , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
         , bytestring        >=0.12 && <0.14
+        , containers        >=0.7  && <0.9
         , eventchain-crypto >=0.1  && <0.2
+        , text              >=2.1  && <2.3
+
+test-suite conformance
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Main.hs
+    default-language:   GHC2024
+
+    -- Identical to the library's list on purpose: `StrictData` changes
+    -- evaluation, so a suite built without it exercises different code from the
+    -- one that ships.
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Verify.Canonical
+        Test.EventChain.Verify.Fold
+        Test.EventChain.Verify.Wire
+
+    -- `eventchain` is absent here too, and the gate seeds on every unit of this
+    -- package rather than only the library -- so these tests cannot ask the
+    -- Producer for an AOF and must read the committed vector instead. That is
+    -- the wall doing its job: what the fold verifies is a file, which is the
+    -- position a stranger is in.
+    --
+    -- aeson is the JCS oracle, and grading here is exactly where it belongs: the
+    -- library may never import `Data.Aeson.RFC8785` (gates:no-jcs-oracle-import),
+    -- because a canonicalizer graded by a copy of itself is graded by nothing.
+    build-depends:
+        , aeson             >=2.3  && <2.4
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , directory         >=1.3  && <1.4
+        , eventchain-crypto
+        , eventchain-verify
+        , filepath          >=1.5  && <1.6
+        , hedgehog          >=1.5  && <1.8
+        , tasty             >=1.5  && <1.6
+        , tasty-hedgehog    >=1.4  && <1.5
+        , tasty-hunit       >=0.10 && <0.11
         , text              >=2.1  && <2.3

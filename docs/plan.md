@@ -86,7 +86,7 @@ Everything else derives from this section. See
 | `CanonicalBytes` | JCS signing message | each, separately | that package's own Canonical |
 | `EntryId`, `PayloadRef` | Opaque labels, no security weight | each, separately | — |
 | `Entry` | Sum by Kind: lifecycle vs mint (`LineHash` target + envelope) — a mint without a target is unrepresentable | verify | `Verify.Wire` |
-| `DecodedEntry` | The (LineBytes, Entry) pair | verify | `Verify.Wire` |
+| `DecodedEntry` | The (LineBytes, EntryObject, Entry) triple | verify | `Verify.Wire` |
 | `WebAuthnEnvelope` | authenticatorData + clientDataJSON, typed challenge | verify | `Verify.WebAuthn` |
 | `ChainPosition` | Ordinal in the AOF | verify | `Verify` |
 
@@ -203,8 +203,8 @@ and the vectors rather than from `eventchain`'s source.
 
 | Module | Owns | Why it is a boundary |
 | --- | --- | --- |
-| `EventChain.Verify.Types` | The claim tier: `Entry`, `DecodedEntry`, `ChainPosition`, `Attestation`. What a line asserts before anything is discharged. An exposed facade over hidden `EventChain.Verify.Types.Internal.*` — aeson's shape for `Data.Aeson.Types` over `Data.Aeson.Types.Internal`, and the same shape `EventChain.Crypto.Types` has. | Parse-don't-validate. Claims are what reading someone else's bytes produces; the Producer computes these values and never claims them, which is why they live here and not there. The facade is what makes rule 8 hold at the *package* edge: a hidden module's unexported constructor cannot be named from outside no matter what a caller imports. |
-| `EventChain.Verify.Wire` | JSONL line codec, decode direction: line bytes → `EntryObject` → `Entry`, base64url in. Strict — unknown member, bad encoding, missing field, **duplicate member** ⇒ hard error with line number. | Owns the exact-bytes invariant (below): the only place a (bytes, parsed) pair is made. |
+| `EventChain.Verify.Types` | The claim tier: `Entry`, `ChainPosition`, `Attestation`. What a line asserts before anything is discharged. An exposed facade over hidden `EventChain.Verify.Types.Internal.*` — aeson's shape for `Data.Aeson.Types` over `Data.Aeson.Types.Internal`, and the same shape `EventChain.Crypto.Types` has. | Parse-don't-validate. Claims are what reading someone else's bytes produces; the Producer computes these values and never claims them, which is why they live here and not there. The facade is what makes rule 8 hold at the *package* edge: a hidden module's unexported constructor cannot be named from outside no matter what a caller imports. |
+| `EventChain.Verify.Wire` | File framing (JSON Lines §3; the no-BOM rule) and the line codec, decode direction: line bytes → `EntryObject` → `Entry`, base64url in. Strict — unknown member, bad encoding, missing field, **duplicate member** ⇒ hard error with line number. Owns `DecodedEntry`. | Owns the exact-bytes invariant (below): the only place a (bytes, object, parsed) triple is made. Framing is here rather than in its own module because it is what JSON Lines calls the same job — and it builds no value, so the Producer's no-JSON-parser rule is not what separates them. |
 | `EventChain.Verify.EntryObject` | The member vocabulary and flat object, re-derived from the normative document. | Independently written on purpose. If it disagrees with `eventchain`'s, one of them is wrong and the vectors say so — that is the gate working. |
 | `EventChain.Verify.Canonical` | The second RFC 8785 implementation and its own `CanonicalBytes`. | Same reason. Two canonicalizers that agree are evidence; one shared canonicalizer is an assumption. |
 | `EventChain.Verify.WebAuthn` | Mint envelope verification delegated to the tweag `webauthn` package (COSE/ES256, assertion checks); owns only the challenge-equals-target-hash rule and the claim-type boundary around it. | WebAuthn's message construction is a distinct protocol; quarantine it — and its crypton dependency — from the hot path. |
@@ -224,9 +224,18 @@ the single place where (bytes, parsed) pairs are created, and the pairing is
 the architectural decision:
 
 ```
-DecodedEntry = (line bytes as read) + (parsed Entry)
+DecodedEntry = (line bytes as read) + (object as read) + (parsed Entry)
 entry hash   = SHA256(line bytes)     -- never SHA256(serialize(parsed))
 ```
+
+M3 added the middle term, and it is the same argument one level down. The signing
+message is `JCS(entry minus signature)`, and JCS runs over the object's *member
+text*, so the Verifier must canonicalize what the line **said** rather than a
+re-encoding of what it made of it. Re-deriving the object from the `Entry` means
+base64url-encoding a `LineHash` back to text with a second encoder — and while
+our decoder rejects non-canonical base64url, so the round trip is a bijection
+today, "is a bijection" is an argument that has to be re-proved every time the
+format moves. Carrying what was read costs one field and needs no argument.
 
 The invariant is why the parse cannot be lifted out of `eventchain-verify`
 into a caller or a frontend. A caller that handed the Verifier a parsed
@@ -258,6 +267,22 @@ Levels, mirroring the paper: chain-only → attribution → payload-checked →
 (future) anchored. Payload access is a caller-supplied lookup; an
 unavailable payload (RBAC) is reported as *unchecked at that level*,
 distinct from a hash mismatch, which is a hard failure.
+
+A level says how far checking got given the *inputs available*; a fault says a
+check ran and said no. Keeping those apart is what makes the RBAC case
+expressible at all — and it is why M3 ships no level type. Continuity and
+attribution need nothing but the file, so at M3 every check that exists runs on
+every entry and there is exactly one level to be at. The type arrives at M5 with
+payload commitment, which is the first check a caller can fail to supply the
+input for.
+
+What M3 does ship is the fault side, and it is four-way rather than two: an
+entry is `Sound`, `Unsound` with the faults, `Malformed` (the line is not an
+entry, and the fold halts), or `Undecided` — libcrypto did not answer.
+`Undecided` is not a fault, and flattening it into one would report a broken
+installation as a forged AOF. That is `eventchain-crypto`'s `SigInvalid`-versus-
+`CryptoError` distinction carried through to the report rather than discarded at
+the last step.
 
 ## Wire-format details settled in this plan
 
@@ -373,12 +398,21 @@ mint challenge mismatch) — which double as the cross-implementation
 interop suite; (b) parametrized tests for the pure branching cores only:
 codec round-trip, JCS output, verifier fold verdicts.
 
-The vectors live at the top of the repo and both sides face them: `eventchain`
-generates, `eventchain-verify` adjudicates. Because neither imports the other,
-"the Producer's output verifies" is a claim about the *format* rather than
-about a shared function, and a disagreement is a real finding rather than a
-broken build. The two JCS implementations are the sharpest case — if they ever
-diverge, one is wrong about RFC 8785 and the vectors are what say so.
+The vectors live at the top of the repo, in `vectors/`, and both sides face
+them: `eventchain` generates, `eventchain-verify` adjudicates. Because neither
+imports the other, "the Producer's output verifies" is a claim about the *format*
+rather than about a shared function, and a disagreement is a real finding rather
+than a broken build. The two JCS implementations are the sharpest case — if they
+ever diverge, one is wrong about RFC 8785 and the vectors are what say so.
+
+The generating side is a golden test rather than a generator anything runs on
+demand: `eventchain`'s suite rebuilds the committed bytes from fixed events and
+compares. A file regenerated by the thing it grades is not evidence, and the
+comparison is possible only because `produce` is pure and ADR-0004's nonce is
+RFC 6979's — the same events under the same key are the same bytes forever, with
+nothing to seed. A failure there is one of exactly two findings, and they are not
+the same: either the format changed on purpose and every downstream verifier
+needs telling, or the Producer changed what it emits and nobody meant it to.
 
 Two gates are structural rather than about behaviour, and they are test suites
 in `gates/` because a convention would not survive a year:
@@ -491,17 +525,35 @@ can grade the Producer without our Verifier existing.
    position; duplicate members, non-string values and unknown members are
    rejected with a line number.
 
-   Two things M3 must settle, booked here so they are not rediscovered:
+   Both things M3 booked are settled, and the tables above say so rather than
+   this list:
 
-   - **Where `DecodedEntry` is defined.** Rule 8 and the type table put it in
-     `Verify.Wire`, the module that makes the pair; the module table above
-     gives it to `Verify.Types`. M0 parked it in `Verify.Types.Internal.Entry`
-     because `Verify.Wire` did not exist yet. When it does, rule 8 wins unless
-     there is a reason it should not, and this table changes.
-   - **No BOM.** JSON Lines requires UTF-8 without a byte order mark and we do
-     not check for one. It is a *file*-level rule, so it belongs to the framer
-     rather than to `lineBytes`, which sees one line and cannot know whether it
-     is the first.
+   - **Where `DecodedEntry` is defined.** Rule 8 won, as booked: it lives in
+     `Verify.Wire`. It also grew a third field — see the exact-bytes invariant.
+   - **No BOM.** The framer owns it, as booked, and rejects a byte order mark
+     *as a BOM* rather than letting aeson refuse it as bad JSON: "line 0 is not
+     JSON" sends a reader hunting a syntax error in a line that has none.
+
+   What M3 did not settle, and deliberately: **the report type has no levels
+   yet.** ADR-0003 rule 5 wants verification levels to be a type, and at M3 there
+   is exactly one — every check the fold can run, it runs, because no check here
+   depends on an input a caller might not have. A one-constructor sum is
+   documentation wearing a type's clothes, and "precise, not fancy" says to wait.
+   Payload commitment is the second level and the first one that can be
+   *unchecked* rather than failed (RBAC), so M5 introduces the type along with
+   the thing that makes it mean something.
+
+   **The vector arrives here, not at M5.** M3's proof needs an AOF that
+   `eventchain-verify` did not build, and `gates:verifier-independence` seeds on
+   every unit of that package — test suites included — so the Verifier's tests
+   cannot call the Producer for one. `vectors/v0-lifecycle.jsonl` is committed and
+   both sides face it: `eventchain`'s suite rebuilds it from fixed events and
+   asserts the committed bytes are still what it emits (RFC 6979 makes signing
+   deterministic, so there is nothing to seed), and `eventchain-verify`'s suite
+   reads the file and adjudicates it. Neither names the other. M5 extends the
+   directory with the broken cases and the non-canonical-order line; what M3
+   proves with it is that two member vocabularies, two JCS implementations and two
+   readings of ADR-0002 agree — across a `build-depends` edge that does not exist.
 4. **M4 — mint:** WebAuthn envelope verification + minted-status fold.
    Proof: fabricated-envelope vectors verify; orphan/mismatched mints
    rejected.
