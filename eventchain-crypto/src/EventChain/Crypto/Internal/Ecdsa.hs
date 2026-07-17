@@ -1,3 +1,4 @@
+-- This file is long because keys, signing and verification share one FFI plumbing vocabulary (own/buildParams/fromdata) that must not scatter, and each decision carries its measurement in haddock (ADR-0004).
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | ECDSA over P-256: keys that have been proven, signatures that are
@@ -326,9 +327,12 @@ twice. The messages are prehashed through the batched SHA-256 kernel — a few
 hundred nanoseconds a line against 34 µs of curve math. And the verification
 context is built once per /run/ of the same key rather than once per line (see
 the module header): an AOF is mostly runs of one Producer's key, so what a line
-pays is the verify itself. The chunk is also a shape the caller can parallelise
-over: signature checks dominate wall-clock at scale, and one shared t'PublicKey'
-across a worker pool is measured at 7.8× on 8 threads.
+pays is the verify itself. A run is detected by point equality — t'PublicKey'
+compares on the claim it was promoted from — never by pointer identity, so a
+caller holding two loads of one key still pays for one context. The chunk is
+also a shape the caller can parallelise over: signature checks dominate
+wall-clock at scale, and one shared t'PublicKey' across a worker pool is
+measured at 7.8× on 8 threads.
 
 Fails wholesale on a malfunction rather than per entry. libcrypto failing to
 answer is not a fact about any one line, and reporting it as 'SigInvalid' would
@@ -342,10 +346,10 @@ verifyBatch triples = unsafePerformIO $ do
     go Nothing [] (zip triples digests)
   where
     go _ acc [] = pure (Right (reverse acc))
-    go cache acc (((PublicKey pkey _, _, signature), digest) : rest) = do
+    go cache acc (((key@(PublicKey pkey _), _, signature), digest) : rest) = do
         keyed <- case cache of
-            Just hit@(k, _) | k == pkey -> pure (Right hit)
-            _ -> fmap ((,) pkey) <$> verifyContext pkey
+            Just hit@(k, _) | k == key -> pure (Right hit)
+            _ -> fmap ((,) key) <$> verifyContext pkey
         case keyed of
             Left err -> pure (Left err)
             Right hit@(_, pctx) ->
@@ -418,8 +422,10 @@ derUnsigned be = BS.concat [BS.pack [0x02, fromIntegral (BS.length body)], body]
 
 {- | The DER libcrypto emits back to raw @r‖s@.
 
-@BN_bn2binpad@ into exactly 32 bytes is the range check: it returns -1 rather than
-truncating, so an @r@ or @s@ too large to be P-256's is caught here.
+@BN_bn2binpad@ into exactly 32 bytes is the range check: it returns -1 rather
+than truncating, so an @r@ or @s@ too large to be P-256's comes back as
+'SigOutOfRange' — a typed refusal, not a crash. libcrypto signing P-256 never
+emits one, but this function's contract is checked, not hoped for.
 -}
 derToRaw :: ByteString -> IO (Either CryptoError Sig)
 derToRaw der = mask_ $
@@ -433,11 +439,15 @@ derToRaw der = mask_ $
                     withForeignPtr owned $ \sp -> do
                         r <- c_ECDSA_SIG_get0_r sp
                         s <- c_ECDSA_SIG_get0_s sp
-                        raw <- BSI.create rawSigLength $ \out -> do
+                        -- A zero length signals out-of-range; the shape check
+                        -- below turns it into the typed error.
+                        raw <- BSI.createUptoN rawSigLength $ \out -> do
                             okR <- c_BN_bn2binpad r out 32
                             okS <- c_BN_bn2binpad s (out `plusPtr` 32) 32
-                            when (okR < 0 || okS < 0) $ error "EventChain.Crypto: r or s exceeds 32 bytes."
-                        pure (either (const (Left SigOutOfRange)) Right (sigFromRaw raw))
+                            pure (if okR < 0 || okS < 0 then 0 else rawSigLength)
+                        pure $ case sigFromRaw raw of
+                            Right ok -> Right ok
+                            Left _ -> Left SigOutOfRange
 
 -- Plumbing -------------------------------------------------------------------
 

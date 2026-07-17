@@ -71,6 +71,26 @@ Decisions:
    at rest is transparent to all proofs because verification runs on
    decompressed bytes.
 
+   One carve-out from "labels are opaque strings", settled at M3: an escape
+   sequence denoting an unpaired UTF-16 surrogate (`\uD800`–`\uDFFF` with no
+   pair) is invalid and the line carrying it is rejected. RFC 8259 admits the
+   syntax and calls receivers' behaviour "unpredictable" (§8.2); its RFC 8785
+   canonical form is unrepresentable in scalar-value string types, and a
+   parser that substituted U+FFFD would canonicalize a string the producer
+   never wrote and verify a signature against it. `docs/paper-amendments.md`
+   PA-10 proposes the correction upstream.
+5. **Closed vocabulary:** an entry carrying a member name the format does
+   not define is invalid, and the line carrying it is rejected with its
+   line number. A member is the format's only extension point, so an
+   unrecognised one is a line whose signature might cover a meaning the
+   verifier did not read. The addendum's `kind` is the live case: a
+   six-member reader that shrugged it off would verify a Mint's signature
+   and report a sound lifecycle event — attestation semantics gone, the
+   checkmark intact. Evolution is by explicit wire-format versioning (a
+   design still open, wanted before M4 adds the first new member), never
+   by signing over what was not read. `docs/paper-amendments.md` PA-11
+   proposes the correction upstream.
+
 ## Consequences
 
 - Files re-encoded by middleboxes fail verification. Feature, not bug. A tool

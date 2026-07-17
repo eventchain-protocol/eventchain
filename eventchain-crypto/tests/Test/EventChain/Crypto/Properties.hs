@@ -223,13 +223,13 @@ sigProps =
                 case sigFromRaw flipped of
                     Left err -> annotateShow err >> failure
                     Right bad ->
-                        -- Either verdict is fine; a CryptoError is not. Flipping
-                        -- a bit must never make libcrypto malfunction, and an
-                        -- r or s pushed out of range must be refused rather
-                        -- than crashed on.
+                        -- Either verdict is fine; an error is not. Flipping a
+                        -- bit must never make libcrypto malfunction: an r or s
+                        -- pushed out of range reads as an invalid signature
+                        -- (EVP_PKEY_verify answers 0 for a malformed encoding),
+                        -- never as a refusal to answer.
                         case verifyBatch [(pub, signedBytes msg, bad)] of
                             Right [_] -> success
-                            Left SigOutOfRange -> success
                             other -> annotateShow other >> failure
     , testProperty "another key's signature does not verify" . property $ do
         a <- forAllWith showKey genPrivateKey

@@ -48,6 +48,7 @@ tests =
             , testCase "a missing member is refused" missingMember
             , testCase "padded base64 is refused" paddedBase64
             , testCase "a 31-byte hash is refused" shortHash
+            , testCase "a lone surrogate escape is refused" loneSurrogate
             , testCase "a line that is not an object is refused" notAnObject
             , testCase "trailing content is refused, trailing whitespace is not" trailing
             ]
@@ -142,6 +143,22 @@ shortHash =
     refuses
         (replace genesisText "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         (MemberWrongShape PrevHash (HashWrongLength 31))
+
+{- | @\\ud800@ with no low surrogate after it is RFC 8259-legal /syntax/ that
+names no Unicode scalar value — RFC 8259 §8.2 calls the behaviour of software
+receiving one "unpredictable". RFC 8785 canonicalizes strings over UTF-16 code
+units, so a canonical form of the lone surrogate exists — and cannot be
+represented by an implementation whose text type holds scalar values only,
+which is this one and most others; a parser that substituted U+FFFD instead
+would canonicalize a string the producer never wrote and verify a signature
+against it. So the behaviour is pinned rather than inherited: the line is
+refused outright, before anything is hashed or checked against it.
+@docs/paper-amendments.md@ PA-10 carries the correction proposed upstream.
+-}
+loneSurrogate :: Assertion
+loneSurrogate = refusesWith (replace "evt-001" "\\ud800") $ \case
+    LineNotJson _ -> True
+    _ -> False
 
 -- | An AOF line is one entry, so a line that is valid JSON but not an object is not one.
 notAnObject :: Assertion

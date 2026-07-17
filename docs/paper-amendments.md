@@ -41,6 +41,8 @@ resolution is unsettled, so proposed wording would be premature.
 | PA-07 | `VerifyAttribution` cannot verify WebAuthn | proposed |
 | PA-08 | Signature's coverage of `prev_hash` unstated — Hub owns ordering | proposed |
 | PA-09 | Our divergences, recorded | — |
+| PA-10 | Unpaired surrogate escapes unaddressed | proposed |
+| PA-11 | Table 6.2's exhaustiveness unstated | proposed |
 
 ---
 
@@ -76,11 +78,12 @@ octets.
 > removed and every other member retained.
 >
 > Removal is by member name and applies to exactly the member named
-> `signature`; a signature cannot cover itself. Every other member is
-> covered, including any member absent from Table 6.2 and any member
-> introduced by a later revision of this specification. An implementation
-> that encounters a member it does not recognise includes it in
-> `entry.data()` unchanged, so that later additions are signed by default.
+> `signature`; a signature cannot cover itself. Every other member the entry
+> carries is covered — coverage follows the object, not Table 6.2, so a
+> member introduced by a later revision of this specification is signed by
+> the same rule, by a verifier of that revision. Whether an entry carrying a
+> member outside the verifier's vocabulary is *valid* is not a serialization
+> question, and is answered separately (see PA-11).
 >
 > Because RFC 8785 orders members by name, the order in which a producer
 > writes members on the line does not affect `entry.data()`, and producers
@@ -447,8 +450,11 @@ disappear or become documented profile deviations.
 - **Signature and key forms** (PA-03): raw `r‖s` and SEC1 compressed, against
   Table 6.2's DER `ECDSA-Sig-Value` and DER SPKI uncompressed point.
 - **`kind`, `target_hash`** (`docs/plan.md`): members Table 6.2 does not list,
-  added for the two-proof-level addendum (ADR-0001). Additive — upstream
-  six-member files stay parseable.
+  added for the two-proof-level addendum (ADR-0001). Additive in one
+  direction only: upstream six-member files stay parseable by us, while a
+  verifier without the addendum rejects a file carrying these — under
+  PA-11's own rule, correctly. Until wire-format versioning exists the
+  addendum is a distinct profile, not a compatible extension.
 - **`attester_key`, `assertion_sig`, `authenticator_data`, `client_data_json`**
   (`eventchain/src/EventChain/EntryObject.hs`): the Mint's WebAuthn envelope. ADR-0002 §3
   fixes that a Mint carries the envelope and names none of its members, so
@@ -463,3 +469,96 @@ disappear or become documented profile deviations.
 **Open, not yet drafted:** the paper says "Unique entry identifier" without
 naming a uniqueness scope (per file? per Hub? global?) or an enforcement
 point. Left unresolved rather than guessed at.
+
+---
+
+## PA-10 — Unpaired surrogate escapes are unaddressed
+
+**Status:** proposed
+
+**Paper says** — nothing. Entries are JSON values (§6), and RFC 8259 knowingly
+admits the case. RFC 8259 §8.2:
+
+> However, the ABNF in this specification allows member names and string
+> values to contain bit sequences that cannot encode Unicode characters; for
+> example, "\uDEAD" (a single unpaired UTF-16 surrogate).
+
+> The behavior of software that receives JSON texts containing such values is
+> unpredictable; for example, implementations might return different values
+> for the length of a string value or even suffer fatal runtime exceptions.
+
+**Defect.** "Unpredictable" is disqualifying in this format's position, twice
+over. `entry_id` and `payload_ref` are opaque strings (PA-03), so a line
+carrying `"\ud800"` is a line the paper permits. RFC 8785 serializes strings
+over UTF-16 code units, so the canonical form of such a string exists — and
+cannot be represented by an implementation whose string type holds Unicode
+scalar values only, which is most of them (Haskell's `Text`, Rust's `String`,
+a Python `str` in practice). Parsers split: some reject the escape, others
+substitute U+FFFD. A substituting verifier canonicalizes a string the producer
+never wrote and checks the signature against it; two verifiers disagree about
+one line. For a proof artifact that is the same ambiguity class as PA-06, and
+the paper says nothing.
+
+**Proposed amendment.** Add to §6, following Table 6.2:
+
+> **Unpaired surrogates.** A member name or member value containing an escape
+> sequence that denotes an unpaired UTF-16 surrogate (`\uD800`–`\uDFFF` not
+> forming a surrogate pair) is invalid. A verifier rejects the entry, and
+> rejects the AOF containing it. An implementation MUST NOT substitute a
+> replacement character: doing so canonicalizes a string the producer never
+> wrote, and verifies a signature against it.
+
+**Our resolution.** The Verifier refuses the line outright — the tokenizer
+rejects the escape, so the line is not JSON to us and is reported with its
+line number before anything is hashed or checked against it.
+`Test.EventChain.Verify.Wire` pins the rejection so the behaviour is ours
+rather than inherited from a dependency's default. The Producer cannot emit
+the case: its labels are Unicode scalar values by type. ADR-0002 §4 records
+the rule.
+
+---
+
+## PA-11 — Whether Table 6.2 is exhaustive is unstated
+
+**Status:** proposed
+
+**Paper says** (§6): "Every entry carries the same structure", followed by
+Table 6.2's six members. Whether the table is exhaustive — whether an entry
+carrying a seventh member is an entry at all — is never said.
+
+**Defect.** Two implementations choose opposite defaults and both conform.
+The lenient one folds the unrecognised member into `entry.data()` and reports
+the entry verified; the strict one rejects the line. One file, two verdicts —
+the ambiguity class of PA-06 and PA-10 again, except the divergence is
+between whole verifier designs rather than parser defaults.
+
+Leniency is the dangerous default, and this document's own addendum is the
+demonstration. A member is the format's only extension point: it is where any
+revision — ours adds `kind` and `target_hash` (PA-09) — changes what an entry
+*claims*. A six-member verifier that signs over an unrecognised `kind`
+verifies a Mint entry's signature and reports a sound lifecycle event: the
+attestation semantics vanish while the verdict stands. The signature checks
+out precisely because it covers a meaning the verifier never read. Rejection
+costs availability of files a verifier cannot yet read; acceptance mis-states
+what was proven. For a proof artifact only the first failure is survivable.
+
+**Proposed amendment.** Add to §6, following Table 6.2:
+
+> **Unknown members.** An entry object carrying a member name this
+> specification does not define is invalid. A verifier rejects the entry, and
+> rejects the AOF containing it. An implementation MUST NOT include an
+> unrecognised member in `entry.data()` and report the entry verified — the
+> signature would then attest a meaning the verifier did not read. A revision
+> of this specification that introduces a member must also state how an entry
+> declares the revision it conforms to, so that a verifier rejects what it
+> cannot read rather than misreading it.
+
+**Our resolution.** The Verifier's vocabulary is closed: an unknown member
+name is a hard error carrying its line number (`UnknownMember`), decided
+2026-07 over the lenient alternative. The Producer cannot emit the case — a
+`ChainedEvent` is a closed record with no bag of extras. Forward
+compatibility is intended to arrive as explicit wire-format versioning, a
+design that is still open and is wanted before M4 makes `kind` the first
+added member; leniency is not its substitute. ADR-0002 §5 records the rule.
+An earlier draft of PA-01 proposed the opposite ("includes it in
+`entry.data()` unchanged") and is corrected above.

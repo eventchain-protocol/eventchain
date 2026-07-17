@@ -88,10 +88,12 @@ that only agree if the chain rule reads line /bytes/ (ADR-0002 §1).
 chainsForward :: Assertion
 chainsForward = do
     verdicts <- vectorVerdicts
-    let entries = sounds verdicts
-        claimed = map ((.prevHash) . verifiedEntry) (drop 1 entries)
-        actual = map verifiedLineHash (init entries)
-    claimed @?= actual
+    case sounds verdicts of
+        [] -> assertFailure "the vector produced no sound entries"
+        entries -> do
+            let links = zip entries (drop 1 entries)
+            map ((.prevHash) . verifiedEntry . snd) links
+                @?= map (verifiedLineHash . fst) links
 
 {- | One byte changed inside a line, and the fold says so twice.
 

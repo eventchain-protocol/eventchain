@@ -37,8 +37,10 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.List (zipWith4)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import Data.Map.Lazy (Map)
+import Data.Map.Lazy qualified as Map
 import EventChain.Crypto (CryptoError (..), PublicKey, SigCheck (..), hashLines, publicKey, verifyBatch)
-import EventChain.Crypto.Types (LineHash, Sig, SignedBytes, lineHashFromBytes, sha256Length)
+import EventChain.Crypto.Types (ClaimedKey, LineHash, Sig, SignedBytes, lineHashFromBytes, sha256Length)
 import EventChain.Verify.Canonical (canonicalize, signingMessage)
 import EventChain.Verify.Types (ChainPosition, Entry (..), ProducedProof (..))
 import EventChain.Verify.Wire
@@ -124,8 +126,13 @@ data Verdict
       Malformed DecodeError
     | -- | The line is an Entry, and at least one check said no.
       Unsound ChainPosition (NonEmpty Fault)
-    | {- | No verdict was reached, because libcrypto did not answer. Says nothing
-      about the Entry.
+    | {- | No verdict was reached: libcrypto did not answer attribution, and no
+      other check found a fault. Says nothing about the Entry.
+
+      A decided fault outranks this. A chain mismatch is established by hashing,
+      which either answers or throws — so when attribution goes unanswered on a
+      line whose link already failed, the line is 'Unsound' with the faults that
+      were found, and the malfunction surfaces on the lines that had none.
       -}
       Undecided ChainPosition CryptoError
     deriving stock (Eq, Show)
@@ -203,10 +210,15 @@ chunkVerdicts prev lns =
     attributions = attributionResults entries
 
     judge (pos, d) h link attribution = case attribution of
-        Left err -> Undecided pos err
         Right sigFaults -> case nonEmpty (link <> sigFaults) of
             Just faults -> Unsound pos faults
             Nothing -> Sound VerifiedEntry{position = pos, entry = decodedEntry d, lineHash = h}
+        -- A chain fault was decided from hashing alone, which answered.
+        -- libcrypto's silence is about attribution, not about that finding,
+        -- so an unanswered line is Undecided only when nothing else said no.
+        Left err -> case nonEmpty link of
+            Just faults -> Unsound pos faults
+            Nothing -> Undecided pos err
 
     lastOr d [] = d
     lastOr _ hs = last hs
@@ -249,11 +261,21 @@ malfunction takes down the whole chunk's verdicts rather than one line's,
 because it is not evidence about any line.
 -}
 attributionResults :: [DecodedEntry] -> [Either CryptoError [Fault]]
-attributionResults decoded = case traverse prepare decoded of
+attributionResults decoded = case traverse (prepare promoted) decoded of
     Left err -> map (const (Left err)) decoded
     Right prepared -> case verifyBatch [t | Checkable t <- prepared] of
         Left err -> map (const (Left err)) decoded
         Right checks -> stitch prepared checks
+  where
+    -- One promotion per distinct key in the chunk, never one per line.
+    -- Promoting is a ~15 µs EVP_PKEY load against a ~34 µs verify, an AOF is
+    -- mostly runs of one Producer's key, and 'verifyBatch' reuses its
+    -- verification context only while consecutive triples carry equal keys —
+    -- so the lines of a run must share one t'PublicKey', or every line pays
+    -- the load and the reuse never happens. The map is value-lazy on purpose:
+    -- each distinct key is one thunk, loaded the first time a line needs it.
+    promoted = Map.fromList [(c, publicKey c) | d <- decoded, let c = claimOf d]
+    claimOf d = (decodedEntry d).producedProof.publicKey
 
 {- | A line's signature, ready to judge — or a key that cannot carry one.
 
@@ -264,25 +286,34 @@ data Checkable
     = KeyRejected
     | Checkable (PublicKey, SignedBytes, Sig)
 
--- | Promote the claimed key and derive the signing message from what the line said.
-prepare :: DecodedEntry -> Either CryptoError Checkable
-prepare d = case publicKey proof.publicKey of
+{- | Promote the claimed key and derive the signing message from what the line said.
+
+The key comes through the chunk's shared promotion map, so a run of lines under
+one Producer's key holds one loaded key rather than a copy per line. The default
+is a direct promotion and nothing relies on it being unreachable — a claim
+missing from a map built over this same chunk cannot happen, but a fresh load
+answers it identically if it somehow did.
+-}
+prepare :: Map ClaimedKey (Either CryptoError PublicKey) -> DecodedEntry -> Either CryptoError Checkable
+prepare promoted d = case Map.findWithDefault (publicKey claim) claim promoted of
     Left KeyNotOnCurve -> Right KeyRejected
     Left err -> Left err
     Right k -> Right (Checkable (k, message, proof.signature))
   where
     proof = (decodedEntry d).producedProof
+    claim = proof.publicKey
     message = signingMessage (canonicalize (decodedObject d))
 
 {- | Put the batch's answers back beside the lines they are about.
 
 'verifyBatch' answers one t'SigCheck' per triple, in order, and lines whose key
-was rejected supplied no triple. A short answer would be a broken contract, so
-it is an error rather than a verdict: a Verifier that quietly ran out of answers
-and reported what it had would report fewer faults than the file has.
+was rejected supplied no triple. A mismatched answer count in either direction
+is a broken contract, so it is an error rather than a verdict: a Verifier that
+quietly ran out of answers — or quietly had answers left over, which means the
+pairing above them slipped — would report faults against the wrong lines.
 -}
 stitch :: [Checkable] -> [SigCheck] -> [Either CryptoError [Fault]]
-stitch [] _ = []
+stitch [] [] = []
 stitch (KeyRejected : more) checks = Right [KeyOffCurve] : stitch more checks
 stitch (Checkable _ : more) (c : checks) = Right (faults c) : stitch more checks
   where
@@ -290,6 +321,8 @@ stitch (Checkable _ : more) (c : checks) = Right (faults c) : stitch more checks
     faults SigInvalid = [SignatureInvalid]
 stitch (Checkable _ : _) [] =
     error "EventChain.Verify: verifyBatch answered fewer checks than it was given."
+stitch [] (_ : _) =
+    error "EventChain.Verify: verifyBatch answered more checks than it was given."
 
 {- | Split a list into fixed-size chunks, lazily.
 

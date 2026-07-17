@@ -50,6 +50,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import EventChain.Crypto.Types
     ( LineBytes
@@ -163,7 +164,7 @@ data LineError
     = -- | The bytes are not an AOF line's content at all: empty, or not UTF-8.
       LineNotWellFormed ShapeError
     | -- | The line is not JSON. Carries @aeson@'s complaint.
-      LineNotJson String
+      LineNotJson Text
     | -- | The line is JSON, but not an object. An AOF line is one entry.
       LineNotAnObject
     | -- | Bytes follow the object that are not whitespace.
@@ -227,7 +228,7 @@ more use to whoever wrote them.
 foldTokens :: Tokens ByteString String -> Either LineError (Map Member Text)
 foldTokens = \case
     TkRecordOpen record -> pairs Map.empty record
-    TkErr err -> Left (LineNotJson err)
+    TkErr err -> Left (LineNotJson (T.pack err))
     TkLit _ rest -> notObject rest
     TkText _ rest -> notObject rest
     TkNumber _ rest -> notObject rest
@@ -244,7 +245,7 @@ foldTokens = \case
             acc' <- insertOnce member text acc
             pairs acc' rest
         TkRecordEnd rest -> trailing rest >> pure acc
-        TkRecordErr err -> Left (LineNotJson err)
+        TkRecordErr err -> Left (LineNotJson (T.pack err))
 
     known name = maybe (Left (UnknownMember name)) Right (memberFromName name)
 
@@ -262,7 +263,7 @@ a malformed line, not a shape to coerce.
 stringValue :: Member -> Tokens (TkRecord ByteString String) String -> Either LineError (Text, TkRecord ByteString String)
 stringValue member = \case
     TkText text rest -> Right (text, rest)
-    TkErr err -> Left (LineNotJson err)
+    TkErr err -> Left (LineNotJson (T.pack err))
     TkLit LitNull _ -> wrong
     TkLit LitTrue _ -> wrong
     TkLit LitFalse _ -> wrong

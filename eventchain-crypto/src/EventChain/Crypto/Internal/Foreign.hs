@@ -1,3 +1,4 @@
+-- This file is long because it is the single FFI seam: every foreign import in the system lives here by rule (ADR-0004), one block per libcrypto entry point, each carrying the C contract it relies on.
 {-# LANGUAGE CApiFFI #-}
 
 {- | The language seam: every line of libcrypto we speak to, and nothing else.
