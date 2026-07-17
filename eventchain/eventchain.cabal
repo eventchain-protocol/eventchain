@@ -1,0 +1,111 @@
+cabal-version:      3.14
+name:               eventchain
+version:            0.1.0.0
+synopsis:
+    Zero-trust provenance: produce hash-chained append-only event files
+description:
+    The Producer for the EventChain protocol: an append-only JSON-Lines file
+    (the AOF) of hash-chained, identity-signed Entries that any holder can
+    verify offline. This package writes those lines — a ChainedEvent in, a
+    signed AOF line out.
+
+    It does not verify them. Verification is @eventchain-verify@, a separate
+    package that shares no format logic with this one (ADR-0005): a Verifier
+    importing the Producer's canonicalizer would attest self-consistency
+    rather than conformance, so the two sides derive the wire format
+    independently and their agreement is what the golden vectors are evidence
+    of.
+
+    __It never parses JSON.__ It emits JSON. There is no JSON parser here and
+    no JSON-accepting attack surface, and that absence is a security property
+    rather than an oversight.
+
+    Protocol specification: <https://eventchain.heliosapp.run/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+-- Only what is built; see eventchain-crypto.cabal for why this narrowed.
+tested-with:        GHC ==9.12.4
+
+-- The public surface. `EventChain` is the front door; `EntryObject` and
+-- `Canonical` sit beside it because callers need them at the signing edge.
+-- The domain vocabulary that used to live here has left: the decision-free
+-- types are `eventchain-crypto`'s, and the claim tier -- Entry, Attestation,
+-- ChainPosition -- is the Verifier's, because a claim is what reading someone
+-- else's bytes produces and this package never reads any. `ChainedEvent`,
+-- `Wire` and `Produce` land next.
+library
+    hs-source-dirs:     src
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+    exposed-modules:
+        EventChain
+        EventChain.Canonical
+        EventChain.EntryObject
+
+    -- No JSON parser, and no `aeson`. The Producer emits JSON and never reads
+    -- it, so the absence is the point rather than an omission to correct.
+    build-depends:
+        , base              >=4.20 && <5
+        , bytestring        >=0.12 && <0.14
+        , containers        >=0.7  && <0.9
+        , eventchain-crypto >=0.1  && <0.2
+        , text              >=2.1  && <2.3
+
+test-suite conformance
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Main.hs
+    default-language:   GHC2024
+
+    -- Kept identical to the library's list on purpose: `StrictData` in
+    -- particular changes evaluation, so a test suite built without it would be
+    -- exercising different code from the one that ships.
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Canonical
+        Test.EventChain.EntryObject
+
+    -- aeson is the JCS oracle, not a dependency of the library. The
+    -- canonicalizer is hand-written per docs/plan.md ("JCS is hand-written";
+    -- string-only members make it small), so an independently written
+    -- implementation is what makes the conformance gate evidence rather than
+    -- a restatement of our own code. The library may never import
+    -- `Data.Aeson.RFC8785`; the grader is not the graded, and
+    -- `gates:no-jcs-oracle-import` asserts it.
+    build-depends:
+        , aeson           >=2.3  && <2.4
+        , base            >=4.20 && <5
+        , bytestring      >=0.12 && <0.14
+        , containers      >=0.7  && <0.9
+        , eventchain
+        , hedgehog        >=1.5  && <1.8
+        , tasty           >=1.5  && <1.6
+        , tasty-hedgehog  >=1.4  && <1.5
+        , text            >=2.1  && <2.3

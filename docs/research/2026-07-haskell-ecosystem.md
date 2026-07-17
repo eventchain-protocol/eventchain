@@ -31,6 +31,11 @@ session scratchpad; numbers above are the artifact.
 
 ## Verdicts by area
 
+This file is the evidence as gathered on 2026-07-16, not a live description of
+the project. Where a verdict has since been overtaken, it is annotated rather
+than rewritten — the point of keeping it is what was known when a decision was
+made.
+
 **Toolchain.** GHC 9.12.4 primary (full HLS 2.14 support, Stackage
 nightly, top adoption); 9.14.1 is GHC's first LTS — CI matrix 9.10.3 /
 9.12.4 / 9.14.1; GHC 10.0 still blocked on RTS bugs mid-2026. GHC2024
@@ -39,6 +44,14 @@ declared explicitly (not compiler default until 10.0). cabal-install
 Hackage upload gate). fourmolu (formatter consensus), hlint 3.10, stan
 still beta. CI via `haskell-actions/setup` v2.11. Dead: stack for new
 libs, `build-type: Custom` (→ `Hooks`), stylish-haskell.
+
+> **Superseded 2026-07-17 (M1).** The project does not use GitHub Actions, so
+> every "CI" verdict above describes a pipeline that never ran. The multi-GHC
+> matrix went with it: `tested-with` now claims 9.12.4 alone, because that is
+> what is built. `cabal check`, fourmolu and hlint remain the right tools and
+> are run by hand. The structural gates are `gates/` test suites, so
+> `cabal test all` asserts them. The toolchain *choices* here still stand; only
+> the thing that was supposed to enforce them was fictional.
 
 **Crypto.** HsOpenSSL has *no EC/ECDSA at all* (module list verified;
 RSA/DSA only — 15-year gap). botan-low: funded and active but pre-1.0,

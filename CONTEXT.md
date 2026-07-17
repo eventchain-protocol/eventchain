@@ -35,15 +35,19 @@ The taxonomy of Entries. A lifecycle Entry records a business event; a Mint Entr
 _Avoid_: type, tag
 
 **Producer**:
-Any source that emits events into the chain: a device signing its own measurements, a service ingesting an external stream (e.g. emails from a specific sender), or the Hub as receiver-of-record for human-originated actions. Every Producer holds a signing key.
-_Avoid_: sensor (too narrow), source, publisher
+Any source that emits events into the chain: a device signing its own measurements, a service ingesting an external stream (e.g. emails from a specific sender), a client carrying a human's passkey. Every Producer holds a signing key and signs with its own — a passkey where a human is present, an equivalent key held directly where the Producer is headless. The Hub is never a Producer: it holds no key and signs nothing.
+_Avoid_: sensor (too narrow), source, publisher; the Hub
 
 **Produced Proof**:
 The claim every Entry carries at append time: this event happened, at this chain position, originating from this Producer — signed with the Producer's key.
 _Avoid_: provisional signature, soft proof
 
+**ChainedEvent**:
+What a Producer is handed: an event's commitment (payload hash and ref, entry id) plus its chain linkage (the predecessor's entry hash). Unsigned, and not yet an Entry — an Entry carries a Produced Proof and this is what exists before there is one. "Event" here is the business occurrence, used as this glossary reserves it.
+_Avoid_: unsigned entry, draft entry, pending entry
+
 **Produce**:
-Append an Entry carrying its Produced Proof. Level one; happens immediately.
+Append an Entry carrying its Produced Proof: turn a ChainedEvent into a signed AOF line. Level one; happens immediately.
 _Avoid_: stage, draft, submit
 
 **Attestation**:
@@ -61,8 +65,9 @@ _Avoid_: provisional (implies the level-one proof is incomplete)
 ### Verification
 
 **Verifier**:
-The offline checker: chain continuity, attribution, payload commitments, and (optionally) Anchors. Needs only the AOF for the first two.
+The offline checker: chain continuity, attribution, payload commitments, and (optionally) Anchors. Needs only the AOF for the first two. A separate package that shares no format logic with the Producer (ADR-0005) — it re-derives the wire format from the normative document, so that its agreement is evidence rather than a shared assumption. Crypto is the deliberate exception: both sides call the same kernels.
 _Avoid_: validator, auditor
 
 **Hub**:
-The role-gated payload store and AOF distributor. Helios territory; out of scope here except as the thing `payload_ref` points into.
+The role-gated payload store and AOF distributor. Helios territory; out of scope here except as the thing `payload_ref` points into, and as a consumer that imports these packages. Holds no signing key and signs nothing: it receives already-signed Entries and appends them. Nothing in an AOF rests on the Hub having behaved — not content, and (because `prev_hash` is signed) not order either.
+_Avoid_: calling it a Producer

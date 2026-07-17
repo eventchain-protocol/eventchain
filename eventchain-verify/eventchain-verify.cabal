@@ -1,0 +1,68 @@
+cabal-version:      3.14
+name:               eventchain-verify
+version:            0.1.0.0
+synopsis:
+    Offline verifier for EventChain append-only event files
+description:
+    The reference Verifier for the EventChain protocol: AOF bytes in, a typed
+    per-entry report out — chain continuity (SHA-256), attribution
+    (ECDSA-P256), payload commitments, and the level of proof each Entry
+    stands at.
+
+    Pure by construction: file bytes in, verdict out. No clock, no network, no
+    config — and no dependency on the Producer. This package shares no format
+    logic with @eventchain@ (ADR-0005): its member vocabulary, its RFC 8785
+    canonicalizer, its line codec and its Entry model are written
+    independently and re-derived from the normative wire-format document. That
+    is what makes the two sides agreeing evidence of conformance rather than
+    of self-consistency, and it is why the missing @build-depends@ edge is
+    asserted by @cabal test all@ rather than left to convention.
+
+    It accepts untrusted JSON because that is inherently the job.
+
+    Protocol specification: <https://eventchain.heliosapp.run/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+-- Only what is built; see eventchain-crypto.cabal for why this narrowed.
+tested-with:        GHC ==9.12.4
+
+-- One exposed facade over hidden type modules, as `eventchain-crypto` does
+-- and as aeson does for `Data.Aeson.Types`. The claim tier's constructors
+-- ship hidden: an Entry may come into being only in the line codec, and
+-- `other-modules` is what makes that true at the package edge instead of by
+-- agreement between contributors.
+library
+    hs-source-dirs:     src
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+    exposed-modules:
+        EventChain.Verify.Types
+
+    other-modules:
+        EventChain.Verify.Types.Internal.Attestation
+        EventChain.Verify.Types.Internal.Entry
+
+    -- `eventchain` is absent and must stay absent: that edge's absence is the
+    -- gate (gates:verifier-independence, which walks the resolved install plan,
+    -- so adding it through a third package fails too). aeson, base64, webauthn,
+    -- unliftio and zlib arrive with the codec and the folds.
+    build-depends:
+        , base              >=4.20 && <5
+        , bytestring        >=0.12 && <0.14
+        , eventchain-crypto >=0.1  && <0.2
+        , text              >=2.1  && <2.3

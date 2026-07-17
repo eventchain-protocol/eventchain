@@ -5,10 +5,20 @@ passkey or a hardware-resident device key — attestation and existence are
 simultaneous. In practice hardware is not always present at the moment an
 event occurs, so we extend the protocol with two proof levels in a single
 chain: every Entry carries a **Produced Proof** (Producer-signed: a device
-for its own data, an ingesting service for external streams, the Hub as
-receiver-of-record for human UI actions), and a human **Attestation**
-accrues later as a separate **Mint** Entry Kind referencing its target by
-entry hash. Minted status is derived by the verifier fold, never stored.
+for its own data, an ingesting service for external streams, a client
+carrying the human's passkey for human UI actions), and a human
+**Attestation** accrues later as a separate **Mint** Entry Kind referencing
+its target by entry hash. Minted status is derived by the verifier fold,
+never stored.
+
+Whatever emits the event signs it, with its own key. **The Hub is never a
+Producer:** it holds no signing key, and no signature it made appears in an
+AOF. An earlier draft of this ADR named it receiver-of-record for human UI
+actions; that would have put a key the file must not trust inside the file.
+Since the Produced Proof also covers `prev_hash` (ADR-0002 §2), neither an
+Entry's content nor its position rests on the Hub having behaved — which is
+what the paper's "verification requires no trust in the Hub" needs in order
+to be true (`docs/paper-amendments.md` PA-08).
 
 ## Considered options
 

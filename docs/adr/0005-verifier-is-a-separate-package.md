@@ -73,8 +73,8 @@ builds a reader from the document alone.
 - **Verifier in a separate repository** — rejected for v0: it would be the
   strongest independence signal, but it splits the golden vectors' home and
   forces cross-repo release coordination on `eventchain-crypto` before either
-  side is stable. `build-depends` enforces the boundary within one project,
-  and CI can assert it. Revisit once the wire format is normative.
+  side is stable. `build-depends` enforces the boundary within one project, and
+  a test suite can assert it. Revisit once the wire format is normative.
 
 ## Consequences
 
@@ -89,7 +89,14 @@ builds a reader from the document alone.
   `eventchain` takes instead.
 - `eventchain`'s package description must stop advertising verification.
 - The boundary is only real while `eventchain-verify` does not
-  `build-depends` on `eventchain`. That is a CI assertion, not a convention.
+  `build-depends` on `eventchain`. That is asserted by `cabal test all`
+  (`gates:verifier-independence`), not left to convention.
+
+  This ADR originally said "That is a CI assertion", and for the length of M0 it
+  was not true of anything: no workflow ran, and the walker that would have
+  checked it had no caller. The sentence was the load-bearing one in this
+  ADR — the argument here is precisely that a convention would not survive a
+  year — so it is recorded rather than quietly corrected.
 - Every rule the Producer enforces about a line's bytes must reach
   `docs/wire-format.md` (M4), because a third party cannot read our code —
   and now neither can our Verifier.

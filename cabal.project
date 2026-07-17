@@ -1,1 +1,20 @@
-packages: .
+-- Three packages, one project (ADR-0005). The Producer and the Verifier share
+-- no format logic: `eventchain-verify` must never build-depend on
+-- `eventchain`, because a Verifier that imports the Producer's canonicalizer
+-- attests self-consistency rather than conformance. That edge's absence is
+-- what makes the golden vectors evidence, so `cabal test all` asserts it
+-- (gates:verifier-independence) rather than trusting this comment.
+--
+-- Crypto goes the other way: `eventchain-crypto` is shared by both, because
+-- there agreement is the requirement rather than the question, and a
+-- known-answer test against OpenSSL gates it without needing a dissenter.
+--
+-- `gates` is not a fourth part of the system; it is the part that grades the
+-- other three. It ships nothing and nothing depends on it. Its test suites are
+-- what make the paragraph above true rather than aspirational, so they run
+-- whenever the tests do.
+packages:
+    eventchain-crypto
+    eventchain
+    eventchain-verify
+    gates

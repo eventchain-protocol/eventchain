@@ -1,0 +1,72 @@
+cabal-version:      3.14
+name:               eventchain-crypto
+version:            0.1.0.0
+synopsis:
+    Shared types for the EventChain protocol's cryptographic kernels
+description:
+    The quantities EventChain's cryptographic kernels operate on: AOF line
+    bytes and payload bytes, SHA-256 digests typed by what was hashed, P-256
+    keys, and raw signatures. Constructors are unexported; validating smart
+    constructors are the only door, so holding a value proves its shape was
+    checked.
+
+    Both the Producer (@eventchain@) and the Verifier (@eventchain-verify@)
+    depend on this package, which is a decision rather than a convenience.
+    Format logic is deliberately /not/ shared between them — two
+    independently written canonicalizers that agree are evidence, where one
+    shared canonicalizer is an assumption — but nothing here encodes a format
+    judgment. A digest is 32 bytes and a compressed point is 33; no two
+    implementations could reach those differently, so sharing them forfeits no
+    evidence while keeping the memory-safety obligation in one place.
+
+    The batched libcrypto FFI these types exist to feed lands here next; it is
+    not present yet.
+
+    Protocol specification: <https://eventchain.heliosapp.run/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+-- Only what is built. 9.10.3 and 9.14.1 were claimed here on the strength of a
+-- CI matrix that no longer exists -- and never did build them. Widening this is
+-- one line and a green build; claiming it without one is how a stranger's build
+-- breaks on our word.
+tested-with:        GHC ==9.12.4
+
+-- One exposed facade over hidden type modules -- aeson's shape for
+-- `Data.Aeson.Types` over `Data.Aeson.Types.Internal`. The inventory ships in
+-- `other-modules` so that a hidden module's unexported constructor cannot be
+-- named from outside no matter what a caller imports: that is what makes the
+-- smart-constructor discipline hold at the package edge rather than only at
+-- the module edge.
+library
+    hs-source-dirs:     src
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+    exposed-modules:
+        EventChain.Crypto.Types
+
+    other-modules:
+        EventChain.Crypto.Types.Internal.Bytes
+        EventChain.Crypto.Types.Internal.Error
+        EventChain.Crypto.Types.Internal.Hash
+        EventChain.Crypto.Types.Internal.Key
+
+    -- A seam, not a library. The system libcrypto arrives with the FFI, via
+    -- `pkgconfig-depends`; nothing else belongs on this list.
+    build-depends:
+        , base       >=4.20 && <5
+        , bytestring >=0.12 && <0.14
