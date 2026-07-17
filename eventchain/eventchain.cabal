@@ -35,8 +35,7 @@ tested-with:        GHC ==9.12.4
 -- The domain vocabulary that used to live here has left: the decision-free
 -- types are `eventchain-crypto`'s, and the claim tier -- Entry, Attestation,
 -- ChainPosition -- is the Verifier's, because a claim is what reading someone
--- else's bytes produces and this package never reads any. `ChainedEvent`,
--- `Wire` and `Produce` land next.
+-- else's bytes produces and this package never reads any.
 library
     hs-source-dirs:     src
     default-language:   GHC2024
@@ -55,12 +54,34 @@ library
     exposed-modules:
         EventChain
         EventChain.Canonical
+        EventChain.ChainedEvent
         EventChain.EntryObject
+        EventChain.Produce
+        EventChain.Wire
+
+    -- JSON syntax, shared by `Canonical` (the signing message) and `Wire` (the
+    -- line). ADR-0005's no-shared-format-logic rule runs across packages, where
+    -- two encoders that agree are evidence; inside one package a second copy of
+    -- this escaper would be graded by nothing and could let a line say what the
+    -- signed bytes do not.
+    other-modules:
+        EventChain.Internal.Json
 
     -- No JSON parser, and no `aeson`. The Producer emits JSON and never reads
     -- it, so the absence is the point rather than an omission to correct.
+    --
+    -- `base64` is here as an encoder and nothing more. docs/plan.md picks it for
+    -- being typed and rejecting non-canonical input, which is a property of its
+    -- *decoders* -- the Verifier's concern. This package only encodes, where
+    -- there is no invalid input to reject, so that justification buys nothing
+    -- here and the plain fact that base64url is not worth hand-rolling buys it
+    -- all. Both packages depending on it is not an ADR-0005 problem: the rule is
+    -- about *our* format logic -- member vocabulary, JCS, the codec, the Entry
+    -- model -- not about third-party encoders, the same way both sides share
+    -- bytestring and libcrypto.
     build-depends:
         , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
         , bytestring        >=0.12 && <0.14
         , containers        >=0.7  && <0.9
         , eventchain-crypto >=0.1  && <0.2
@@ -91,6 +112,9 @@ test-suite conformance
     other-modules:
         Test.EventChain.Canonical
         Test.EventChain.EntryObject
+        Test.EventChain.Fixtures
+        Test.EventChain.Produce
+        Test.EventChain.Wire
 
     -- aeson is the JCS oracle, not a dependency of the library. The
     -- canonicalizer is hand-written per docs/plan.md ("JCS is hand-written";
@@ -99,13 +123,30 @@ test-suite conformance
     -- a restatement of our own code. The library may never import
     -- `Data.Aeson.RFC8785`; the grader is not the graded, and
     -- `gates:no-jcs-oracle-import` asserts it.
+    --
+    -- aeson earns a second job at M2: it is also the *parser* no Producer test
+    -- could otherwise have. "our decoder reads our encoder" is the tautology
+    -- this package is built to avoid, and there is no decoder here to write it
+    -- with, so a reader that has never seen the format is the only way to ask
+    -- whether a line says what we meant.
+    --
+    -- `process` and `temporary` are the OpenSSL CLI's: the M2 gate shells out
+    -- to it to judge every line's signature, over a message the oracle derived.
+    -- It needs files on disk for the key, the message and the signature.
+    -- `base64` decodes what the library encoded, from the untyped door -- the
+    -- text on a line is a claim, not a wrapper.
     build-depends:
         , aeson           >=2.3  && <2.4
         , base            >=4.20 && <5
+        , base64          >=1.0  && <1.1
         , bytestring      >=0.12 && <0.14
         , containers      >=0.7  && <0.9
         , eventchain
+        , eventchain-crypto
+        , filepath        >=1.5  && <1.6
         , hedgehog        >=1.5  && <1.8
+        , process         >=1.6  && <1.7
         , tasty           >=1.5  && <1.6
         , tasty-hedgehog  >=1.4  && <1.5
+        , temporary       >=1.3  && <1.4
         , text            >=2.1  && <2.3

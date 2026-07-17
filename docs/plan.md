@@ -191,8 +191,9 @@ parses JSON**: no parser dependency, no JSON-accepting attack surface.
 | `EventChain.ChainedEvent` | What a Producer is handed: a business event's commitment (payload hash and ref, entry id) plus its chain linkage (the predecessor's `LineHash`). Unsigned, and not yet an Entry. | The Producer's whole input in one type. An Entry carries a Produced Proof; this is what exists before there is one, so the two are not the same type and a signature cannot be assumed. |
 | `EventChain.EntryObject` | The AOF's JSON shape as the Producer emits it: the `Member` name vocabulary and the flat string-valued object. | The member names are the format's, not the encoder's and not the canonicalizer's. Both need them; neither should own them. |
 | `EventChain.Canonical` | RFC 8785 (JCS) serialization of an entry minus its `signature` member — the signing message — and `CanonicalBytes` itself, constructor unexported. | Fabricating the signing message is signing a message of your choosing, so only this module may. Note what changed: this is now one of **two** canonicalizers by design (`eventchain-verify` has its own), and their agreement is the gate. |
-| `EventChain.Wire` | Encode only: `EntryObject` → line bytes, base64url out. | The exact-bytes invariant (below) starts here — the bytes signed and chained are the bytes written. |
-| `EventChain.Produce` | Given a `ChainedEvent` and a producer key, build the next signed line. Pure construction; the caller does IO. | Producer state (last line hash) is the only mutable thing in the system; keep it in one place. |
+| `EventChain.Wire` | Encode only: a `ChainedEvent` and a key → an `EntryObject`, and that → line bytes. Owns base64url and the order members are written in. | The exact-bytes invariant (below) starts here — the bytes signed and chained are the bytes written. |
+| `EventChain.Internal.Json` (hidden) | JSON syntax for the vocabulary: braces, commas, RFC 8785 §3.2.2.2 escaping, over an already-ordered member list. | `Canonical` and `Wire` must escape identically or a line says what its signature does not cover. ADR-0005 gates that across *packages*, where two encoders agreeing is evidence; inside one package a second copy is graded by nothing, so this is one copy on purpose. `Canonical` keeps the decisions (drop `signature`, sort by name) and `Wire` keeps its own (order, base64url) — syntax is what is shared, never judgment. |
+| `EventChain.Produce` | Given a `ChainedEvent` and a producer key, build the next signed line, and hand back that line's `LineHash`. Pure construction; the caller does IO. | The chain's one piece of carried state is the last line's hash, and it is deliberately *not* held here — it arrives as the next `ChainedEvent`'s `prevHash`, because a producer that restarted must recover it from the file rather than from memory. What lives here is the rule for advancing it: the next `prev_hash` is the digest of the line you actually wrote, which is why `produce` returns it rather than leaving the caller to recompute it from something else. |
 
 ### `eventchain-verify` — the Verifier
 
@@ -276,6 +277,21 @@ of v0, alongside the vectors):
   draft put this "at the Wire boundary", which named a module that never sees
   a DER byte.)
 - **Public keys:** SEC1 compressed points (33 bytes), base64url.
+- **Member order on the line:** free, and spent rather than saved. RFC 8785
+  sorts the *signing message*, so what order a producer writes members in
+  changes nothing a signature covers — `docs/paper-amendments.md` PA-01 says so
+  outright ("producers are free to choose it"). `eventchain` writes the `Member`
+  vocabulary's declaration order, which is `docs/protocol.md`'s table order for
+  the six members the paper defines, with the addendum's after them.
+
+  **The six sort to that same order under RFC 8785**, so a v0 lifecycle line is
+  byte-identical to `JCS(entry)`. That is arithmetic about six names, not a rule,
+  and `kind` breaks it at M4 (RFC 8785 puts it second; we write it seventh).
+  Nothing may rest on the coincidence: the chain covers line bytes as written
+  (ADR-0002 §1), and a verifier that recanonicalized before hashing would agree
+  with every line we currently emit and then fail on the first legal file written
+  by anyone else. M5 owes the vectors a line that catches exactly that — see
+  there.
 - **Line framing:** [JSON Lines](https://jsonlines.org/) §3 settles this, and
   `docs/wire-format.md` cites it rather than restating it: the terminator is
   `0x0a`, so a line's content is every byte before it and a `0x0d` preceding
@@ -309,10 +325,18 @@ Per package, because the split is what keeps each list short:
 
 - **`eventchain-crypto`** — `bytestring`, and the system libcrypto. Nothing
   else; it is a seam, not a library.
-- **`eventchain`** — `base64` (typed, rejects non-canonical input),
-  `bytestring`, `text`, `containers`. **No JSON parser**: the Producer emits
-  JSON and never reads it, so `aeson` is absent here and that absence is the
-  point.
+- **`eventchain`** — `base64`, `bytestring`, `text`, `containers`. **No JSON
+  parser**: the Producer emits JSON and never reads it, so `aeson` is absent here
+  and that absence is the point.
+
+  `base64` was picked for being typed and rejecting non-canonical input, which is
+  a property of its *decoders* — so it buys nothing on this side, where the
+  Producer only encodes and an encoder has no invalid input to reject. That
+  justification is the Verifier's; here the package is a plain encoder, and it is
+  here because base64url is not worth hand-rolling. Both libraries depending on it
+  is not an ADR-0005 problem: that rule is about *our* format logic — member
+  vocabulary, JCS, the codec, the Entry model — not about third-party encoders,
+  the same way both sides share `bytestring` and libcrypto.
 - **`eventchain-verify`** — `aeson` (≥2.3) as the *parser*, `base64`,
   `webauthn` (tweag; mint envelopes), `unliftio` (pooled parallel
   verification), `zlib` (incremental gzip), `bytestring`, `text`,
@@ -433,10 +457,32 @@ can grade the Producer without our Verifier existing.
    FFI risk first, before anything depends on its shape.
 2. **M2 — the Producer:** `eventchain` — `ChainedEvent`, `EntryObject`,
    `Canonical`, `Wire` (encode), `Produce`. Much of this is already written.
-   Proof: JCS matches RFC 8785 (aeson oracle + RFC examples); produce N
-   entries into an AOF and have the **OpenSSL CLI** — not our Verifier —
-   check every line's signature against its canonical bytes. The Producer is
-   correct before a Verifier exists to agree with it.
+   Proof: JCS matches RFC 8785 (aeson oracle + RFC examples); produce N entries
+   into an AOF and have **nothing of ours derive what is checked** — aeson parses
+   each line, `Data.Aeson.RFC8785` canonicalizes it minus `signature`, and the
+   **OpenSSL CLI** verifies the line's own signature under the line's own
+   `public_key` over those bytes. The Producer is correct before a Verifier
+   exists to agree with it.
+
+   This bar is sharper than the one first written here, which asked only that the
+   CLI "check every line's signature against its canonical bytes" and left open
+   *whose* canonical bytes. If they are ours, the check reduces to a sign/verify
+   round-trip that M1's known-answer tests already settled, and it would pass while
+   a line said something its signature did not cover — the one failure this
+   milestone is placed here to catch. Letting the oracle derive the message costs
+   nothing (aeson is already the test dependency, and the line has to be parsed
+   either way) and puts the library in the path exactly once: it wrote the file.
+
+   The CLI still earns its place, and not for the arithmetic. Loading a
+   compressed point out of an SPKI wrapper and reading a raw `r‖s` signature as
+   DER is an *interop* claim about ADR-0002 §4's encodings, and a third party has
+   to be able to consume them.
+
+   Same move as M1, and for the same reason: that milestone's own bar asked for
+   OpenSSL CLI fixtures, which are the same libcrypto we call, so they would have
+   graded our wiring rather than our correctness. Published known answers replaced
+   them. A proof bar written before the code exists is a guess about what will be
+   checkable; it is worth re-asking once it is.
 3. **M3 — the Verifier:** `eventchain-verify` — its own member vocabulary,
    its own JCS, the Entry model, the strict token-fold codec, and the
    streaming fold (continuity + attribution). Proof: it verifies M2's AOF
@@ -465,6 +511,16 @@ can grade the Producer without our Verifier existing.
    JSON Lines and RFC 8785 for the rules they already own; the M3 work is what
    surfaces the rest. v0 done when a stranger could reimplement from docs +
    vectors alone.
+
+   One vector is booked here rather than left to be rediscovered: **an AOF whose
+   members are written in a non-canonical order and which still verifies.**
+   Everything `eventchain` emits happens to be `JCS(entry)` (see "Member order on
+   the line" above), so every vector generated from it is consistent with a rule
+   we do not have — that the chain covers `SHA256(JCS(entry))`. A third party who
+   built a verifier on that reading would pass our whole suite and then reject the
+   first legal file written by anyone else, and we would have handed them the
+   misreading ourselves. The vector has to be written by hand, because the
+   Producer cannot emit a counterexample to its own order.
 
 ## Out of scope for v0
 

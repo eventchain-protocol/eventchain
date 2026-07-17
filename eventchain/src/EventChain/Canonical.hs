@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 {- | The signing message: an entry object minus its @signature@ member,
 serialized per RFC 8785 (JSON Canonicalization Scheme).
 
@@ -26,8 +24,12 @@ properties of the input type rather than promises this module keeps — if
 'Member' ever admits a non-ASCII name, the sort below is wrong and needs
 UTF-16 code units, as @aeson@'s canonicalizer does for arbitrary keys.
 
-What is left is escaping and a sort, which is why this is an encoder rather
-than a dependency.
+What is left to this module is a sort and an exclusion, which is why RFC 8785
+is an encoder here rather than a dependency. Writing the object out is JSON
+syntax rather than canonicalization, and belongs to the Producer's JSON
+renderer, which "EventChain.Wire" also writes lines with — deliberately, so
+that the bytes a signature covers and the bytes a line carries cannot be
+escaped two different ways.
 
 == Divergence from @Data.Aeson.RFC8785@
 
@@ -43,21 +45,14 @@ module EventChain.Canonical
     ) where
 
 import Data.ByteString (ByteString)
-import Data.ByteString.Builder qualified as BB
-import Data.ByteString.Lazy qualified as LBS
-import Data.Char (ord)
 import Data.List (sortOn)
-import Data.Text (Text)
-import Data.Text qualified as T
-import Data.Text.Encoding qualified as TE
 import EventChain.EntryObject
     ( EntryObject
     , Member (Signature)
-    , MemberValue
     , entryObjectMembers
     , memberName
-    , memberValueText
     )
+import EventChain.Internal.Json (renderObject)
 
 {- | The RFC 8785 serialization of an entry minus its @signature@ member:
 the exact message a Produced Proof signs.
@@ -110,53 +105,7 @@ cannot verify a passkey (PA-07).
 signingMessage :: EntryObject -> CanonicalBytes
 signingMessage =
     CanonicalBytes
-        . LBS.toStrict
-        . BB.toLazyByteString
         . renderObject
         . sortOn (memberName . fst)
         . filter ((/= Signature) . fst)
         . entryObjectMembers
-
--- | @{"a":"b","c":"d"}@ — no whitespace, members already in RFC 8785 order.
-renderObject :: [(Member, MemberValue)] -> BB.Builder
-renderObject ms = BB.char8 '{' <> commaSep (map renderMember ms) <> BB.char8 '}'
-  where
-    renderMember (m, v) = renderString (memberName m) <> BB.char8 ':' <> renderString (memberValueText v)
-
-    commaSep [] = mempty
-    commaSep (b : bs) = b <> foldMap (BB.char8 ',' <>) bs
-
-{- | A JSON string per RFC 8785 §3.2.2.2: escape @"@, @\\@ and the control
-characters; emit everything else as the UTF-8 it already is.
-
-The escaped case is rare — base64url values and ASCII names never enter it —
-so the common path stays a single copy rather than a fold over characters.
--}
-renderString :: Text -> BB.Builder
-renderString t = BB.char8 '"' <> body <> BB.char8 '"'
-  where
-    body
-        | T.any needsEscape t = T.foldr (\c acc -> escapeChar c <> acc) mempty t
-        | otherwise = TE.encodeUtf8Builder t
-
-    needsEscape c = c == '"' || c == '\\' || c < '\x20'
-
-{- | One character, escaped by the RFC's table.
-
-The five control characters with a JSON shorthand take it; the rest of the
-C0 range takes @\\u00hh@ with lowercase hex. Nothing above U+001F is escaped
-but @"@ and @\\@ — not @\/@, and not any non-ASCII character, which travels
-as UTF-8 rather than as a surrogate escape.
--}
-escapeChar :: Char -> BB.Builder
-escapeChar = \case
-    '"' -> BB.string8 "\\\""
-    '\\' -> BB.string8 "\\\\"
-    '\b' -> BB.string8 "\\b"
-    '\t' -> BB.string8 "\\t"
-    '\n' -> BB.string8 "\\n"
-    '\f' -> BB.string8 "\\f"
-    '\r' -> BB.string8 "\\r"
-    c
-        | c < '\x20' -> BB.string8 "\\u00" <> BB.word8HexFixed (fromIntegral (ord c))
-        | otherwise -> BB.charUtf8 c
