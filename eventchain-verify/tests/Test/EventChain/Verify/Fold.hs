@@ -18,7 +18,7 @@ which bytes are chained. None of that is checked by a shared function, because
 there is no shared function. If any of it were wrong, this file would not
 verify — and that is what makes the agreement evidence rather than a tautology.
 -}
-module Test.EventChain.Verify.Fold (tests) where
+module Test.EventChain.Verify.Fold (tests, findRepoRoot) where
 
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS

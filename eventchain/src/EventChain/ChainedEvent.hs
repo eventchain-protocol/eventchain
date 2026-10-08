@@ -1,5 +1,5 @@
-{- | What a Producer is handed: a business event's commitment plus its chain
-linkage. Unsigned, and not yet an Entry.
+{- | What a Producer is handed: an occurrence's commitment plus its chain
+linkage, and which Kind of Entry it becomes. Unsigned, and not yet an Entry.
 
 An Entry carries a Produced Proof; a t'ChainedEvent' is what exists before there
 is one, so the two are not the same type and no function taking this one may
@@ -7,7 +7,10 @@ assume a signature. Making that proof is "EventChain.Produce"'s, and it is the
 only thing that turns one of these into a line.
 
 /Event/ here is the business occurrence — the thing that happened — as
-@CONTEXT.md@ reserves the word. The Entry is the record of it.
+@CONTEXT.md@ reserves the word, and a lifecycle Entry is the record of one. A
+Mint records a different occurrence: a human attesting an earlier Entry
+(ADR-0001). Both arrive through this type because both take the same six
+commitments and the same linkage; 'EventKind' carries what the Mint adds.
 
 == Why these types live here and not in the shared package
 
@@ -35,6 +38,8 @@ module EventChain.ChainedEvent
 
       -- * The Producer's input
     , ChainedEvent (..)
+    , EventKind (..)
+    , Attestation (..)
 
       -- * Chain linkage
     , genesisHash
@@ -43,8 +48,12 @@ module EventChain.ChainedEvent
 import Data.ByteString qualified as BS
 import Data.Text (Text)
 import EventChain.Crypto.Types
-    ( LineHash
+    ( AuthenticatorBytes
+    , ClaimedKey
+    , ClientDataBytes
+    , LineHash
     , PayloadHash
+    , Sig
     , lineHashFromBytes
     , sha256Length
     )
@@ -108,6 +117,54 @@ data ChainedEvent = ChainedEvent
     , payloadHash :: PayloadHash
     , payloadRef :: PayloadRef
     , prevHash :: LineHash
+    , kind :: EventKind
+    }
+    deriving stock (Eq, Show)
+
+{- | Which Kind of Entry this input becomes, and the content the Kind adds.
+
+The taxonomy the Verifier's fold reports is decided here, at emission, by
+which constructor the caller reached for — never by a string a caller spells.
+@kind@'s wire value, like every member's, is the codec's to write (ADR-0003:
+a domain quantity is not text a caller invents).
+-}
+data EventKind
+    = {- | Records a business event: the absent @kind@ member, the paper's
+      six-member line, byte-identical to what a paper-only implementation
+      writes (ADR-0006).
+      -}
+      Lifecycle
+    | {- | Attests an earlier Entry (ADR-0001). Carries the 'Attestation';
+      the line carries @kind@, @target_hash@, the WebAuthn envelope, and
+      the @v@ declaration the added members oblige.
+      -}
+      Mint Attestation
+    deriving stock (Eq, Show)
+
+{- | A human's claim that the target Entry is true, in the shape the
+authenticator handed it over: the WebAuthn envelope, plus the target it binds.
+
+Opaque on purpose, all of it. The Producer emits these quantities and never
+inspects them — no JSON parser reads @clientDataJson@, no flag bit is
+examined, and whether the assertion actually covers the target is a question
+only a verifier can settle (ADR-0007 fixes which checks). What arrives here is
+what the WebAuthn ceremony produced: the assertion signature already
+normalized to raw @r‖s@ at the crypto edge, the attester's compressed point,
+and the two byte strings the signed message is rebuilt from.
+
+@target@ is the attested Entry's hash — the digest 'EventChain.Produce.produce'
+handed back when the target was written. The ceremony's challenge must be
+those same 32 bytes, raw: the client base64url-encodes them into
+@clientDataJson@, and a verifier compares that text against @target_hash@'s.
+A caller that passed the base64url /text/ as the challenge would mint an
+envelope bound to nothing.
+-}
+data Attestation = Attestation
+    { target :: LineHash
+    , attesterKey :: ClaimedKey
+    , assertionSig :: Sig
+    , authenticatorData :: AuthenticatorBytes
+    , clientDataJson :: ClientDataBytes
     }
     deriving stock (Eq, Show)
 

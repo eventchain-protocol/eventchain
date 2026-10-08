@@ -54,6 +54,12 @@ module EventChain.Crypto.Types
     , SignedBytes
     , signedBytes
     , signedBytesRaw
+    , AuthenticatorBytes
+    , authenticatorBytes
+    , authenticatorBytesRaw
+    , ClientDataBytes
+    , clientDataBytes
+    , clientDataBytesRaw
 
       -- * Hashes, by subject
     , LineHash
@@ -62,6 +68,8 @@ module EventChain.Crypto.Types
     , PayloadHash
     , payloadHashFromBytes
     , payloadHashRaw
+    , ClientDataHash
+    , clientDataHashRaw
     , sha256Length
 
       -- * Keys and signatures

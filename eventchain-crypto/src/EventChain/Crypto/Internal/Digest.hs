@@ -26,6 +26,7 @@ loudly, once, at first use.
 module EventChain.Crypto.Internal.Digest
     ( hashLines
     , hashPayloads
+    , hashClientData
     , digestChunk
     ) where
 
@@ -38,8 +39,8 @@ import Data.ByteString.Unsafe qualified as BSU
 import Data.Coerce (coerce)
 import Data.Word (Word8)
 import EventChain.Crypto.Internal.Foreign
-import EventChain.Crypto.Types.Internal.Bytes (LineBytes (..), PayloadBytes (..))
-import EventChain.Crypto.Types.Internal.Hash (LineHash (..), PayloadHash (..), sha256Length)
+import EventChain.Crypto.Types.Internal.Bytes (ClientDataBytes (..), LineBytes (..), PayloadBytes (..))
+import EventChain.Crypto.Types.Internal.Hash (ClientDataHash (..), LineHash (..), PayloadHash (..), sha256Length)
 import Foreign.C.String (withCString)
 import Foreign.C.Types (CInt, CUInt)
 import Foreign.ForeignPtr (ForeignPtr, mallocForeignPtrBytes, newForeignPtr, withForeignPtr)
@@ -90,6 +91,12 @@ hashLines = coerce digestChunk
 -- | SHA-256 of each Payload's content.
 hashPayloads :: [PayloadBytes] -> [PayloadHash]
 hashPayloads = coerce digestChunk
+
+{- | SHA-256 of each Mint envelope's client data — the digest a WebAuthn
+assertion's message embeds. One call per chunk of Mints, like the others.
+-}
+hashClientData :: [ClientDataBytes] -> [ClientDataHash]
+hashClientData = coerce digestChunk
 
 {- | The kernel: one context, one algorithm, and one output buffer, reused down
 the chunk.

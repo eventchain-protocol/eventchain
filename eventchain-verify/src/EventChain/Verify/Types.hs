@@ -52,10 +52,6 @@ module EventChain.Verify.Types
       -- * Attestations
     , Attestation (target, attesterKey, assertionSig, envelope)
     , WebAuthnEnvelope (authenticatorData, clientDataJson)
-    , AuthenticatorData
-    , authenticatorDataRaw
-    , ClientDataJson
-    , clientDataJsonRaw
     ) where
 
 import EventChain.Verify.Types.Internal.Attestation

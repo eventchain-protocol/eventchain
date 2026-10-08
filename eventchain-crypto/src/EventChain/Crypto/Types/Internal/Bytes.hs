@@ -34,6 +34,12 @@ module EventChain.Crypto.Types.Internal.Bytes
     , SignedBytes (..)
     , signedBytes
     , signedBytesRaw
+    , AuthenticatorBytes (..)
+    , authenticatorBytes
+    , authenticatorBytesRaw
+    , ClientDataBytes (..)
+    , clientDataBytes
+    , clientDataBytesRaw
     ) where
 
 import Data.ByteString (ByteString)
@@ -119,3 +125,45 @@ signedBytes = SignedBytes
 -- | The message's bytes, for the crypto edge.
 signedBytesRaw :: SignedBytes -> ByteString
 signedBytesRaw (SignedBytes bs) = bs
+
+{- | An authenticator's attested data, exactly as the authenticator signed it:
+RP ID hash, flags, signature counter, and whatever extensions followed them.
+
+Opaque here on purpose. Its /structure/ — the 37-byte minimum, the flag bits —
+is W3C §6.1's and checking it is a documented verification step with a fault to
+report (ADR-0007), not a shape a constructor may silently enforce: a Mint
+carrying a truncated blob must decode so a verifier can say /what/ is wrong
+with it, and a fabricator must be able to write one.
+-}
+newtype AuthenticatorBytes = AuthenticatorBytes ByteString
+    deriving stock (Eq, Show)
+
+{- | Any bytes claim to be authenticator data; the checks that judge the claim
+run elsewhere, per ADR-0007.
+-}
+authenticatorBytes :: ByteString -> AuthenticatorBytes
+authenticatorBytes = AuthenticatorBytes
+
+-- | The attested bytes, for the signed-message construction and the checks.
+authenticatorBytesRaw :: AuthenticatorBytes -> ByteString
+authenticatorBytesRaw (AuthenticatorBytes bs) = bs
+
+{- | The client data an authenticator hashed into its signed message, exactly
+as it was transmitted.
+
+Kept as bytes for the same reason a line is: the signature covers
+@SHA-256(clientDataJSON)@ of these exact bytes, so a re-serialization of the
+JSON they spell would break it precisely as re-serializing a line breaks the
+chain. Whether they decode as UTF-8 and parse as JSON is a verification step
+with a fault to report, never a constructor's veto.
+-}
+newtype ClientDataBytes = ClientDataBytes ByteString
+    deriving stock (Eq, Show)
+
+-- | Any bytes claim to be client data; the reading rules run elsewhere.
+clientDataBytes :: ByteString -> ClientDataBytes
+clientDataBytes = ClientDataBytes
+
+-- | The transmitted bytes, for hashing and for the two members read from them.
+clientDataBytesRaw :: ClientDataBytes -> ByteString
+clientDataBytesRaw (ClientDataBytes bs) = bs

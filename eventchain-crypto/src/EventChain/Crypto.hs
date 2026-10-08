@@ -49,6 +49,7 @@ module EventChain.Crypto
     ( -- * Hashing
       hashLines
     , hashPayloads
+    , hashClientData
 
       -- * Keys
     , PublicKey
@@ -68,7 +69,7 @@ module EventChain.Crypto
     , CryptoError (..)
     ) where
 
-import EventChain.Crypto.Internal.Digest (hashLines, hashPayloads)
+import EventChain.Crypto.Internal.Digest (hashClientData, hashLines, hashPayloads)
 import EventChain.Crypto.Internal.Ecdsa
     ( PrivateKey
     , PublicKey

@@ -24,6 +24,10 @@ _Avoid_: body, document
 **Chain**:
 The total order of Entries established by each Entry referencing the hash of its predecessor.
 
+**Revision**:
+The member vocabulary an Entry declares itself against, via the `v` member (ADR-0006). Absence declares the upstream paper's six members; `"1"` declares the addendum's. A closed label set compared by equality only — an Entry declaring a label the Verifier does not know is rejected, never read approximately. Declared per Entry, signed with it, and emitted only where the base vocabulary does not suffice.
+_Avoid_: version (reserve for software releases), schema, profile
+
 **Anchor**:
 An OpenTimestamps commitment of the chain head, proving the chain existed in a state at a time.
 _Avoid_: timestamp, notarization

@@ -82,12 +82,13 @@ Everything else derives from this section. See
 | `ClaimedKey` | 33 bytes shaped like a compressed point | crypto | `claimedKey` |
 | `PublicKey` | Validated P-256 point | crypto | Crypto |
 | `Sig` | 64-byte `r‖s` | crypto | Crypto (DER normalized away) |
-| `ChainedEvent` | A business event's commitment plus its chain linkage; unsigned, not yet an Entry | eventchain | caller edge |
+| `ChainedEvent` | An occurrence's commitment plus its chain linkage and its `EventKind`; unsigned, not yet an Entry | eventchain | caller edge |
 | `CanonicalBytes` | JCS signing message | each, separately | that package's own Canonical |
 | `EntryId`, `PayloadRef` | Opaque labels, no security weight | each, separately | — |
 | `Entry` | Sum by Kind: lifecycle vs mint (`LineHash` target + envelope) — a mint without a target is unrepresentable | verify | `Verify.Wire` |
 | `DecodedEntry` | The (LineBytes, EntryObject, Entry) triple | verify | `Verify.Wire` |
-| `WebAuthnEnvelope` | authenticatorData + clientDataJSON, typed challenge | verify | `Verify.WebAuthn` |
+| `WebAuthnEnvelope` | authenticatorData + clientDataJSON, exact transmitted bytes | verify | `Verify.Wire` |
+| `AuthenticatorBytes`, `ClientDataBytes`, `ClientDataHash` | The envelope's blobs by provenance, and the digest the assertion message embeds — computed only by Crypto | crypto | blobs: claim tier (no shape); digest: Crypto |
 | `ChainPosition` | Ordinal in the AOF | verify | `Verify` |
 
 The claim tier turns out to be almost entirely Verifier-side, and that is not
@@ -178,8 +179,8 @@ convention.
 
 | Module | Owns | Why it is a boundary |
 | --- | --- | --- |
-| `EventChain.Crypto.Types` | The types the kernels operate on: `LineBytes`, `PayloadBytes`, `LineHash`, `PayloadHash`, `ClaimedKey`, `PublicKey`, `Sig`. Decision-free — lengths and encodings, no format judgment. | Both sides must name the same quantities to call the same kernels. Nothing here encodes a choice two implementations could make differently, so sharing it forfeits no evidence. |
-| `EventChain.Crypto` | Our thin (~200-line), hand-written, **batched** FFI to system libcrypto: SHA-256 over chunks of lines, ECDSA-P256 verify/sign (RFC 6979 via OpenSSL ≥3.2), raw compressed-point key loading. See [ADR-0004](adr/0004-crypto-kernels-libcrypto-ffi.md). | The language seam, and the only memory-unsafe code in the system — writing it twice doubles that obligation to buy nothing, since known-answer tests against OpenSSL gate it without a second opinion. Nothing outside may import the FFI; batching is mandatory (per-line calls burn the hardware acceleration on call overhead). Relinking against aws-lc's C core later touches nothing else. |
+| `EventChain.Crypto.Types` | The types the kernels operate on: `LineBytes`, `PayloadBytes`, `LineHash`, `PayloadHash`, `ClaimedKey`, `PublicKey`, `Sig`; since M4 also the Mint envelope's byte blobs (`AuthenticatorBytes`, `ClientDataBytes`) and the digest the assertion message embeds (`ClientDataHash`). Decision-free — lengths and encodings, no format judgment. | Both sides must name the same quantities to call the same kernels. Nothing here encodes a choice two implementations could make differently, so sharing it forfeits no evidence. |
+| `EventChain.Crypto` | Our thin (~200-line), hand-written, **batched** FFI to system libcrypto: SHA-256 over chunks of lines and of Mint client data, ECDSA-P256 verify/sign (RFC 6979 via OpenSSL ≥3.2), raw compressed-point key loading. See [ADR-0004](adr/0004-crypto-kernels-libcrypto-ffi.md). | The language seam, and the only memory-unsafe code in the system — writing it twice doubles that obligation to buy nothing, since known-answer tests against OpenSSL gate it without a second opinion. Nothing outside may import the FFI; batching is mandatory (per-line calls burn the hardware acceleration on call overhead). Relinking against aws-lc's C core later touches nothing else. |
 
 ### `eventchain` — the Producer
 
@@ -188,7 +189,7 @@ parses JSON**: no parser dependency, no JSON-accepting attack surface.
 
 | Module | Owns | Why it is a boundary |
 | --- | --- | --- |
-| `EventChain.ChainedEvent` | What a Producer is handed: a business event's commitment (payload hash and ref, entry id) plus its chain linkage (the predecessor's `LineHash`). Unsigned, and not yet an Entry. | The Producer's whole input in one type. An Entry carries a Produced Proof; this is what exists before there is one, so the two are not the same type and a signature cannot be assumed. |
+| `EventChain.ChainedEvent` | What a Producer is handed: an occurrence's commitment (payload hash and ref, entry id) plus its chain linkage (the predecessor's `LineHash`), and its `EventKind` — `Lifecycle`, or `Mint` carrying the Attestation's envelope as opaque crypto types (M4). Unsigned, and not yet an Entry. | The Producer's whole input in one type. An Entry carries a Produced Proof; this is what exists before there is one, so the two are not the same type and a signature cannot be assumed. The Kind is a constructor, never a string a caller spells. |
 | `EventChain.EntryObject` | The AOF's JSON shape as the Producer emits it: the `Member` name vocabulary and the flat string-valued object. | The member names are the format's, not the encoder's and not the canonicalizer's. Both need them; neither should own them. |
 | `EventChain.Canonical` | RFC 8785 (JCS) serialization of an entry minus its `signature` member — the signing message — and `CanonicalBytes` itself, constructor unexported. | Fabricating the signing message is signing a message of your choosing, so only this module may. Note what changed: this is now one of **two** canonicalizers by design (`eventchain-verify` has its own), and their agreement is the gate. |
 | `EventChain.Wire` | Encode only: a `ChainedEvent` and a key → an `EntryObject`, and that → line bytes. Owns base64url and the order members are written in. | The exact-bytes invariant (below) starts here — the bytes signed and chained are the bytes written. |
@@ -207,8 +208,9 @@ and the vectors rather than from `eventchain`'s source.
 | `EventChain.Verify.Wire` | File framing (JSON Lines §3; the no-BOM rule) and the line codec, decode direction: line bytes → `EntryObject` → `Entry`, base64url in. Strict — unknown member, bad encoding, missing field, **duplicate member** ⇒ hard error with line number. Owns `DecodedEntry`. | Owns the exact-bytes invariant (below): the only place a (bytes, object, parsed) triple is made. Framing is here rather than in its own module because it is what JSON Lines calls the same job — and it builds no value, so the Producer's no-JSON-parser rule is not what separates them. |
 | `EventChain.Verify.EntryObject` | The member vocabulary and flat object, re-derived from the normative document. | Independently written on purpose. If it disagrees with `eventchain`'s, one of them is wrong and the vectors say so — that is the gate working. |
 | `EventChain.Verify.Canonical` | The second RFC 8785 implementation and its own `CanonicalBytes`. | Same reason. Two canonicalizers that agree are evidence; one shared canonicalizer is an assumption. |
-| `EventChain.Verify.WebAuthn` | Mint envelope verification delegated to the tweag `webauthn` package (COSE/ES256, assertion checks); owns only the challenge-equals-target-hash rule and the claim-type boundary around it. | WebAuthn's message construction is a distinct protocol; quarantine it — and its crypton dependency — from the hot path. |
-| `EventChain.Verify` | The fold(s): chain continuity, attribution, payload commitment, minted-status derivation. Emits a typed per-entry report with the verification level achieved. | The reference verifier is the open-source artifact; it must be pure (file bytes in, verdict out — no clock, no network, no config). |
+| `EventChain.Verify.WebAuthn` | Mint envelope verification, hand-written on the shared crypto kernels: the RP-free subset of W3C §7.2 plus the challenge-equals-target-hash rule (ADR-0007, superseding the tweag-`webauthn` delegation first booked here). | The construction is a concatenation and a hash; the tweag package's independent reading of §7.2 grades ours from a test suite, and crypton never enters a library build. |
+| `EventChain.Verify` | The streaming fold: chain continuity, attribution, payload commitment, and the per-line envelope checks for Mints. Emits a typed per-entry report with the verification level achieved. | The reference verifier is the open-source artifact; it must be pure (file bytes in, verdict out — no clock, no network, no config). |
+| `EventChain.Verify.Minted` | Minted-status derivation: the O(n) join of each Sound Mint to the Sound Entry its target hash names, orphans reported with the hash they claim. | Split from the streaming fold at M4 because the two passes cost differently — the join carries every hash seen where the fold carries one — and a caller who wants continuity over a billion-entry file should not pay for a join it did not ask for. |
 
 Test-only fabrication (synthetic producers, fake authenticator envelopes,
 golden-vector generator) lives in a separate internal library so it can
@@ -293,6 +295,11 @@ of v0, alongside the vectors):
 - **`kind`:** optional member; absent means lifecycle event. Present as
   `"mint"` for Mint entries, which also carry `target_hash` and the
   WebAuthn envelope. Keeps upstream 6-field files parseable unchanged.
+- **`v`:** the revision declaration (ADR-0006). A JSON string, equality-only
+  against a closed label set; absent declares the paper's base six members,
+  `"1"` declares the addendum vocabulary. Emitted only where the base does
+  not suffice — in v0, on Mint lines — so lifecycle output stays
+  byte-identical to a paper-only implementation's.
 - **`entry_id`:** opaque producer-chosen label, no security weight, no
   uniqueness requirement; the entry hash is the only real reference.
 - **Signatures:** raw 64-byte `r‖s`, base64url. DER never appears on a line
@@ -363,9 +370,11 @@ Per package, because the split is what keeps each list short:
   vocabulary, JCS, the codec, the Entry model — not about third-party encoders,
   the same way both sides share `bytestring` and libcrypto.
 - **`eventchain-verify`** — `aeson` (≥2.3) as the *parser*, `base64`,
-  `webauthn` (tweag; mint envelopes), `unliftio` (pooled parallel
-  verification), `zlib` (incremental gzip), `bytestring`, `text`,
-  `containers`.
+  `unliftio` (pooled parallel verification), `zlib` (incremental gzip),
+  `bytestring`, `text`, `containers`. `webauthn` (tweag) was booked here as
+  a library dependency for mint envelopes; ADR-0007 supersedes that — the
+  check is hand-written on `eventchain-crypto`, and the package enters one
+  test suite as the oracle that grades it.
 
 JCS is hand-written in each of `eventchain` and `eventchain-verify`
 (string-only members make it ~30 lines), and each is conformance-tested
@@ -386,8 +395,9 @@ the fold is *less* work per line than `decode`, which is itself the same
 tokenizer followed by a `KeyMap` build we would discard.
 
 Explicitly avoided: HsOpenSSL (no EC API), streamly (pre-1.0 churn), crypton
-as a direct dependency (enters transitively via `webauthn` only),
-`base64-bytestring` (stale), `zstd` bindings (stale).
+in any library build (enters transitively via `webauthn`, which ADR-0007
+confines to a test suite), `base64-bytestring` (stale), `zstd` bindings
+(stale).
 
 ## Testing and vectors
 
@@ -557,6 +567,69 @@ can grade the Producer without our Verifier existing.
 4. **M4 — mint:** WebAuthn envelope verification + minted-status fold.
    Proof: fabricated-envelope vectors verify; orphan/mismatched mints
    rejected.
+
+   What M4 needed settled arrived before its code, as ADR-0002 §5 asked:
+   ADR-0006 designs the revision declaration (`v`, below in the wire-format
+   list) that lets `kind` be the first added member without leniency, and
+   ADR-0007 makes the envelope members normative, fixes the RP-free check
+   set, and supersedes the tweag-`webauthn` library delegation in favour of
+   a hand-written check the package grades from a test suite. The mint
+   vectors extend `vectors/` by the M3 pattern — `eventchain`'s suite
+   fabricates deterministically, the Verifier's suite adjudicates the
+   committed file, and the fabricated envelopes face the oracle too.
+
+   What M4 settled in code, recorded here as M3's were:
+
+   - **Per-Kind completeness.** ADR-0006 closes names per revision; the
+     Kind's members needed the same treatment, and got it: the Mint group
+     exists whole or not at all, anchored by `kind` — a `target_hash` on a
+     kindless line is refused (`MemberOutsideKind`), a `kind` without its
+     group is a missing member, and a bare `"v":"1"` on a lifecycle line
+     stays valid exactly as ADR-0006 says. The Verifier's new rejections:
+     `UnknownRevision`, `MemberOutsideRevision`, `MemberOutsideKind`,
+     `UnknownKind`.
+   - **The Producer's input stayed one type.** `ChainedEvent` gained
+     `EventKind` (`Lifecycle` | `Mint Attestation`) rather than a second
+     entry point: `produce` stays total and uniform across Kinds, and the
+     Kind is a constructor a caller reaches for, never a string it spells.
+     The envelope arrives as opaque crypto types and is emitted unread — the
+     no-JSON-parser property is untouched.
+   - **Envelope checks run in the streaming pass.** Every ADR-0007 check is
+     per-line — the challenge rule is string equality against the line's own
+     `target_hash` text — so they cost O(1) like continuity, and only the
+     target join lives in the separate O(n) fold, now
+     `EventChain.Verify.Minted` (backward-looking on purpose: a Mint
+     precedes its target only in a rewritten file, and orphans carry the
+     hash they claim). Assertions batch through the same `verifyBatch`
+     kernel as Produced Proofs, as a second crossing per chunk rather than
+     spliced into the first: interleaving attester keys into a producer-key
+     run would break the context reuse the batching exists for.
+   - **The envelope's byte types are crypto's.** `AuthenticatorBytes`,
+     `ClientDataBytes` and the `ClientDataHash` digest joined the shared
+     types — provenance labels and a length, no format judgment — so both
+     sides name the same quantities and the client-data digest crosses the
+     seam batched (`hashClientData`).
+   - **The cross-ecosystem vector is soft-webauthn's.** ADR-0007 first
+     credited "python-fido2's software authenticator"; python-fido2 ships
+     none, and the correction is the `soft-webauthn` package's
+     `SoftWebauthnDevice`, built on python-fido2's primitives. Its envelope
+     is committed as a fixture (`vectors/mint/cross/`), wrapped
+     deterministically into `cross-soft-webauthn.jsonl`, and adjudicated
+     Sound — two implementations of the authenticator's construction,
+     sharing no language, agreeing.
+   - **The oracle runs, and earned its keep immediately.** The `mint-oracle`
+     suite synthesizes the ceremony tweag `webauthn`'s RP-shaped API demands
+     (origin, RP ID hash, a user handle the envelope does not model, the
+     SEC1 point re-encoded as a COSE_Key) and faces every fabrication to it:
+     the sound envelope verifies, the rejections reject. Its first run
+     caught a fabricated `rpIdHash` constant that claimed to be
+     `SHA-256("eventchain.test")` and was not — exactly the class of error a
+     second implementation exists to catch. Two divergences are pinned as
+     the oracle's verdicts rather than papered over: its aeson-based parse
+     tolerates the duplicated client-data member we make fatal, and 0.11
+     predates Level 3's BE/BS rule. `webauthn` 0.11 caps base <4.20, so
+     `cabal.project` scopes `allow-newer` to it and holds jose and the
+     crypton-x509 family inside the release's own windows.
 5. **M5 — publish the contract:** payload-commitment checks, report type
    finalized, `docs/wire-format.md` written, golden vectors committed. The
    document must state every rule currently living only in code, and cite

@@ -7,50 +7,29 @@ in the client data (ADR-0002). So a Mint carries the envelope those bytes
 are rebuilt from, and the rule that binds it to its target is
 @challenge == target entry hash@.
 
-The types here are structure only. Parsing the envelope, extracting the
-challenge and checking that rule are "EventChain.Verify.WebAuthn"'s job — a
-distinct protocol, quarantined from the hot path.
+The types here are structure only, and every leaf is a shared crypto type —
+byte blobs and claims whose shapes no two implementations could read
+differently. Parsing the envelope, extracting the challenge and checking the
+binding rule are the Verifier's WebAuthn checks' job, hand-written on the
+shared kernels per ADR-0007; nothing here runs one.
 -}
 module EventChain.Verify.Types.Internal.Attestation
-    ( AuthenticatorData (..)
-    , authenticatorDataRaw
-    , ClientDataJson (..)
-    , clientDataJsonRaw
-    , WebAuthnEnvelope (..)
+    ( WebAuthnEnvelope (..)
     , Attestation (..)
     ) where
 
-import Data.ByteString (ByteString)
-import EventChain.Crypto.Types (ClaimedKey, LineHash, Sig)
+import EventChain.Crypto.Types (AuthenticatorBytes, ClaimedKey, ClientDataBytes, LineHash, Sig)
 
-{- | The authenticator's own attested data: RP ID hash, flags, signature
-counter. Opaque bytes here; "EventChain.Verify.WebAuthn" gives them structure.
+{- | The two byte strings a WebAuthn assertion's signed message is rebuilt
+from, exactly as transmitted.
+
+Both stay bytes for the chain's own reason: the signature covers these exact
+bytes, so re-serializing either would break it precisely as re-serializing a
+line breaks the chain.
 -}
-newtype AuthenticatorData = AuthenticatorData ByteString
-    deriving stock (Eq, Show)
-
--- | The authenticator data's bytes, as they were signed.
-authenticatorDataRaw :: AuthenticatorData -> ByteString
-authenticatorDataRaw (AuthenticatorData bs) = bs
-
-{- | The client data the authenticator hashed into its signed message: JSON
-text carrying the challenge, origin and type.
-
-Kept as bytes on purpose — the client data is signed as it was
-transmitted, so re-serializing it would break the signature exactly as
-re-serializing a line breaks the chain.
--}
-newtype ClientDataJson = ClientDataJson ByteString
-    deriving stock (Eq, Show)
-
--- | The client data's bytes, as they were hashed.
-clientDataJsonRaw :: ClientDataJson -> ByteString
-clientDataJsonRaw (ClientDataJson bs) = bs
-
--- | The two byte strings a WebAuthn assertion's signed message is rebuilt from.
 data WebAuthnEnvelope = WebAuthnEnvelope
-    { authenticatorData :: AuthenticatorData
-    , clientDataJson :: ClientDataJson
+    { authenticatorData :: AuthenticatorBytes
+    , clientDataJson :: ClientDataBytes
     }
     deriving stock (Eq, Show)
 

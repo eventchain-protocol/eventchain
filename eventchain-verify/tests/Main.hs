@@ -16,6 +16,7 @@ module Main (main) where
 
 import Test.EventChain.Verify.Canonical qualified as Canonical
 import Test.EventChain.Verify.Fold qualified as Fold
+import Test.EventChain.Verify.Mint qualified as Mint
 import Test.EventChain.Verify.Wire qualified as Wire
 import Test.Tasty (defaultMain, testGroup)
 
@@ -27,4 +28,5 @@ main =
             [ Canonical.tests
             , Wire.tests
             , Fold.tests
+            , Mint.tests
             ]

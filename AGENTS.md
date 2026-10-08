@@ -75,10 +75,11 @@ Read these first, in order:
   preserves both, which is what makes the duplicate fatal — and the fold is
   less work per line than `decode`, which is that same tokenizer plus a
   `KeyMap` build we would throw away.
-- **crypton is never a direct dependency** (it arrives transitively via
-  `webauthn` at M4, in `eventchain-verify` only; keep it off the hot path).
-  Never touch `Crypto.PubKey.ECC.ECDSA` — the legacy module, measured 60×
-  slower.
+- **crypton never enters a library build.** It arrives transitively via
+  tweag `webauthn`, which ADR-0007 confines to one test suite as the oracle
+  grading the hand-written mint check — so a `build-depends` on either, in
+  any library, is the ADR being violated, not a packaging choice. Never
+  touch `Crypto.PubKey.ECC.ECDSA` — the legacy module, measured 60× slower.
 - **Batch the crypto FFI.** At SHA-NI speed a 300-byte hash ≈ 150ns ≈
   one FFI call; one call per line spends the acceleration on overhead.
 - **Update `CONTEXT.md` and the ADRs the moment a term or decision

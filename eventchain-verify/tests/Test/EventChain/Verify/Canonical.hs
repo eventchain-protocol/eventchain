@@ -17,14 +17,14 @@ it: neither can name the other. The vector is what carries it, and
 made over its canonical bytes verifies here only if both readings of RFC 8785
 produced the same bytes.
 
-Nor does anything here establish that the member /sort/ runs. It cannot: every
-name in the v0 vocabulary sorts into its declaration order, so a canonicalizer
-that never sorted at all would agree with the oracle on every object it can
-currently be handed, and a test asserting otherwise would be asserting an
-identity function. @kind@ is the first name that distinguishes them — RFC 8785
-puts it second where the Producer writes it seventh — so M4 is when this becomes
-checkable, and M5's hand-written non-canonical-order vector is what checks it
-from outside.
+The member /sort/ became checkable at M4 and the generator spends the Mint
+members on it. Before them it could not be: the six sort into their own
+declaration order, so a canonicalizer that never sorted at all would have
+agreed with the oracle on every object it could be handed. @kind@ is the first
+name that distinguishes the orders — RFC 8785 puts it second where the
+declaration order puts it seventh — so an object carrying the Mint group only
+canonicalizes to the oracle's bytes if the sort ran. M5's hand-written
+non-canonical-order vector still checks the same point from outside.
 -}
 module Test.EventChain.Verify.Canonical (tests) where
 
@@ -35,7 +35,7 @@ import Data.Aeson.RFC8785 (encodeCanonical)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text (Text)
 import EventChain.Verify.Canonical (canonicalBytesRaw, canonicalize)
-import EventChain.Verify.EntryObject (EntryObject (..), Member (..), entryObjectMembers, memberName)
+import EventChain.Verify.EntryObject (EntryObject (..), Member (..), MintMembers (..), entryObjectMembers, memberName)
 import Hedgehog (Gen, Property, forAll, property, withTests, (===))
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
@@ -94,14 +94,35 @@ someone else wrote, and the escaping that reaches the canonicalizer is exactly
 what is under test.
 -}
 genObject :: Gen EntryObject
-genObject =
-    EntryObject
-        <$> genText
-        <*> genText
-        <*> genText
-        <*> genText
-        <*> genText
-        <*> genText
+genObject = do
+    entryIdText <- genText
+    payloadHashText <- genText
+    payloadRefText <- genText
+    prevHashText <- genText
+    publicKeyText <- genText
+    signatureText <- genText
+    vLabel <- Gen.maybe genText
+    mintGroup <-
+        Gen.maybe
+            ( MintMembers
+                <$> genText
+                <*> genText
+                <*> genText
+                <*> genText
+                <*> genText
+                <*> genText
+            )
+    pure
+        EntryObject
+            { entryId = entryIdText
+            , payloadHash = payloadHashText
+            , payloadRef = payloadRefText
+            , prevHash = prevHashText
+            , publicKey = publicKeyText
+            , signature = signatureText
+            , v = vLabel
+            , mint = mintGroup
+            }
 
 genText :: Gen Text
 genText = Gen.text (Range.linear 0 24) (Gen.filter oracleSafe genChar)
@@ -138,6 +159,8 @@ blank =
         , prevHash = ""
         , publicKey = ""
         , signature = ""
+        , v = Nothing
+        , mint = Nothing
         }
 
 -- | Ours, as bytes.

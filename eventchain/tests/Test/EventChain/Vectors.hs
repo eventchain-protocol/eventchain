@@ -27,6 +27,7 @@ module Test.EventChain.Vectors
     ( tests
     , vectorAof
     , vectorPath
+    , findRepoRoot
     ) where
 
 import Data.ByteString (ByteString)
@@ -120,6 +121,7 @@ vectorEvents =
             , payloadHash = hashOf digest
             , payloadRef = payloadRef ref
             , prevHash = genesisHash
+            , kind = Lifecycle
             }
 
     hashOf hex = case payloadHashFromBytes (unhex hex) of

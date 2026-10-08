@@ -52,6 +52,15 @@ tests =
             , testCase "a line that is not an object is refused" notAnObject
             , testCase "trailing content is refused, trailing whitespace is not" trailing
             ]
+        , testGroup
+            "revisions (ADR-0006)"
+            [ testCase "kind on an undeclared line is outside the base vocabulary" kindUndeclared
+            , testCase "a bare declaration on a lifecycle line is valid input" bareDeclaration
+            , testCase "an unknown revision label is refused" unknownRevision
+            , testCase "a Kind-specific member without a kind is refused" strayTargetHash
+            , testCase "an unknown kind is refused" unknownKind
+            , testCase "a kind without the rest of its members is refused" mintIncomplete
+            ]
         ]
 
 -- Framing --------------------------------------------------------------------
@@ -104,7 +113,7 @@ wellFormed = case decodeOnly validLine of
 
 -- | A line saying something we cannot account for might mean something we did not read.
 unknownMember :: Assertion
-unknownMember = refuses (withMember "\"kind\":\"mint\"") (UnknownMember "kind")
+unknownMember = refuses (withMember "\"flavor\":\"vanilla\"") (UnknownMember "flavor")
 
 {- | The reason the codec folds tokens instead of calling @decode@.
 
@@ -177,6 +186,61 @@ trailing = do
         Left err -> assertFailure ("a legal trailing space was refused: " <> show err)
         Right _ -> pure ()
     refuses (validLine <> "{}") LineTrailingContent
+
+-- Revisions (ADR-0006) -------------------------------------------------------
+
+{- | ADR-0006's live case: a member the format defines, on a line whose
+declaration does not admit it.
+
+Distinct from 'unknownMember' on purpose — this Verifier knows the name, and
+the complaint says so. The line, not the Verifier, is what selected the
+vocabulary the name fell outside of.
+-}
+kindUndeclared :: Assertion
+kindUndeclared = refuses (withMember "\"kind\":\"mint\"") (MemberOutsideRevision Kind)
+
+{- | The label admits the vocabulary; it does not mandate exercising it.
+
+ADR-0006 mirrors RFC 5280 here: basic-fields-only certificates "SHOULD be 1"
+but "MAY be 2 or 3", and a six-member line declaring @\"1\"@ is likewise
+valid. The declaration is signed with the entry, so rejecting it would reject
+a line whose producer told the truth.
+-}
+bareDeclaration :: Assertion
+bareDeclaration = case decodeOnly (withMember "\"v\":\"1\"") of
+    Left err -> assertFailure ("a bare revision declaration was refused: " <> show err)
+    Right _ -> pure ()
+
+{- | Equality against a closed set: a label outside it is rejected, never read
+"approximately". @\"1.0\"@ would be refused the same way — it is not @\"1\"@.
+-}
+unknownRevision :: Assertion
+unknownRevision = refuses (withMember "\"v\":\"2\"") (UnknownRevision "2")
+
+{- | A @target_hash@ with no @kind@ accounts for nothing: the revision admits
+the name, the line gives it no meaning, and signing over what was not read
+is the failure ADR-0002 §5 refuses.
+-}
+strayTargetHash :: Assertion
+strayTargetHash =
+    refuses
+        (withMember ("\"v\":\"1\",\"target_hash\":\"" <> genesisText <> "\""))
+        (MemberOutsideKind TargetHash)
+
+-- | The Kind taxonomy is closed like everything else here.
+unknownKind :: Assertion
+unknownKind =
+    refuses
+        ( withMember
+            ( "\"v\":\"1\",\"kind\":\"lunch\",\"target_hash\":\"x\",\"attester_key\":\"x\","
+                <> "\"assertion_sig\":\"x\",\"authenticator_data\":\"x\",\"client_data_json\":\"x\""
+            )
+        )
+        (UnknownKind "lunch")
+
+-- | @kind@ anchors its group: present, every Mint member is required.
+mintIncomplete :: Assertion
+mintIncomplete = refuses (withMember "\"v\":\"1\",\"kind\":\"mint\"") (MissingMember TargetHash)
 
 -- Fixtures -------------------------------------------------------------------
 

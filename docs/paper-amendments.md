@@ -385,7 +385,8 @@ effectively (a). Every Entry carries a Producer's Produced Proof over
 `entry.data()`; a Mint additionally carries the WebAuthn envelope as ordinary
 members, which the Producer's signature covers — binding the attestation to
 its chain position. The two levels are why our `entry.data()` stays uniform
-across kinds.
+across kinds. ADR-0007 names the envelope's members and fixes which Web
+Authentication checks a relying-party-less verifier runs.
 
 ---
 
@@ -453,14 +454,17 @@ disappear or become documented profile deviations.
   added for the two-proof-level addendum (ADR-0001). Additive in one
   direction only: upstream six-member files stay parseable by us, while a
   verifier without the addendum rejects a file carrying these — under
-  PA-11's own rule, correctly. Until wire-format versioning exists the
-  addendum is a distinct profile, not a compatible extension.
+  PA-11's own rule, correctly. The versioning this bullet once waited on
+  exists now: ADR-0006's `v` member has entries carrying addendum members
+  declare the revision, so the profile boundary is declared on the line
+  rather than discovered by rejection.
 - **`attester_key`, `assertion_sig`, `authenticator_data`, `client_data_json`**
-  (`eventchain/src/EventChain/EntryObject.hs`): the Mint's WebAuthn envelope. ADR-0002 §3
-  fixes that a Mint carries the envelope and names none of its members, so
-  these four are **ours alone and recorded nowhere else** — the weakest thing
-  in the format until `docs/wire-format.md` (M4) makes them normative. PA-07's
-  resolution upstream would settle them properly.
+  (ADR-0007): the Mint's WebAuthn envelope. ADR-0002 §3 fixes that a Mint
+  carries the envelope and names none of its members; ADR-0007 now names
+  them and fixes their encodings, closing their "recorded nowhere else"
+  period, and `docs/wire-format.md` (M5) inherits the rules. They remain
+  ours rather than the paper's: PA-07's resolution upstream is what would
+  settle them properly.
 - **`entry_id`** (`docs/plan.md`): the paper calls it "Unique entry
   identifier"; we treat it as an opaque producer-chosen label with no
   uniqueness requirement and no security weight, because the entry hash is the
@@ -556,9 +560,9 @@ what was proven. For a proof artifact only the first failure is survivable.
 **Our resolution.** The Verifier's vocabulary is closed: an unknown member
 name is a hard error carrying its line number (`UnknownMember`), decided
 2026-07 over the lenient alternative. The Producer cannot emit the case — a
-`ChainedEvent` is a closed record with no bag of extras. Forward
-compatibility is intended to arrive as explicit wire-format versioning, a
-design that is still open and is wanted before M4 makes `kind` the first
-added member; leniency is not its substitute. ADR-0002 §5 records the rule.
+`ChainedEvent` is a closed record with no bag of extras. The revision
+declaration this amendment obliges is designed: ADR-0006's `v` member,
+per-entry, absent-means-base, equality-only — leniency is not its
+substitute, and the mechanism needs none. ADR-0002 §5 records the rule.
 An earlier draft of PA-01 proposed the opposite ("includes it in
 `entry.data()` unchanged") and is corrected above.

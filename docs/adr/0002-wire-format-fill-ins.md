@@ -60,7 +60,8 @@ Decisions:
    they sign `authenticatorData || SHA256(clientDataJSON)` with the
    challenge embedded in `clientDataJSON`. Mint entries therefore carry
    the WebAuthn envelope, and the challenge must equal the target entry
-   hash. Verification stays offline.
+   hash. Verification stays offline. (The envelope's member names,
+   encodings, and the exact check set are ADR-0007's.)
 4. **Format and encodings:** [JSON Lines](https://jsonlines.org/) retained
    (the protocol's "no custom codec" identity) and normative — its three
    requirements (UTF-8 with no BOM; one JSON value per line; `0x0a`
@@ -86,8 +87,9 @@ Decisions:
    verifier did not read. The addendum's `kind` is the live case: a
    six-member reader that shrugged it off would verify a Mint's signature
    and report a sound lifecycle event — attestation semantics gone, the
-   checkmark intact. Evolution is by explicit wire-format versioning (a
-   design still open, wanted before M4 adds the first new member), never
+   checkmark intact. Evolution is by explicit wire-format versioning
+   (designed in ADR-0006, as this section asked: a per-entry `v` member,
+   absent-means-base, arriving before M4 adds the first new member), never
    by signing over what was not read. `docs/paper-amendments.md` PA-11
    proposes the correction upstream.
 

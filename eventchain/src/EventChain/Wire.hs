@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 {- | The line codec, encode direction: a t'EventChain.ChainedEvent.ChainedEvent'
 into the AOF's JSON shape, and that shape into the bytes of a line.
 
@@ -63,8 +65,11 @@ module EventChain.Wire
 import Data.Base64.Types (extractBase64)
 import Data.ByteString (ByteString)
 import Data.ByteString.Base64.URL qualified as Base64Url
+import Data.Text (Text)
 import EventChain.ChainedEvent
-    ( ChainedEvent (..)
+    ( Attestation (..)
+    , ChainedEvent (..)
+    , EventKind (..)
     , entryIdText
     , payloadRefText
     )
@@ -72,7 +77,9 @@ import EventChain.Crypto.Types
     ( ClaimedKey
     , LineBytes
     , Sig
+    , authenticatorBytesRaw
     , claimedKeyRaw
+    , clientDataBytesRaw
     , lineBytes
     , lineHashRaw
     , payloadHashRaw
@@ -109,11 +116,12 @@ signedObject :: ClaimedKey -> ChainedEvent -> Sig -> EntryObject
 signedObject key event sig =
     build (commonMembers key event <> [(Signature, base64url (sigRaw sig))])
 
-{- | The members every Kind carries, in any order — 'encodeLine' imposes the
-order and 'EventChain.Canonical.signingMessage' imposes its own.
+{- | The event's members before signing, in any order — 'encodeLine' imposes
+the order and 'EventChain.Canonical.signingMessage' imposes its own.
 
 @entry_id@ and @payload_ref@ travel as the text they are; the rest are binary
-and travel as base64url (ADR-0002 §4). Mint's members join this list at M4.
+and travel as base64url (ADR-0002 §4). A Mint adds its Kind's members and,
+with them, the revision declaration they oblige.
 -}
 commonMembers :: ClaimedKey -> ChainedEvent -> [(Member, MemberValue)]
 commonMembers key event =
@@ -123,6 +131,39 @@ commonMembers key event =
     , (PrevHash, base64url (lineHashRaw event.prevHash))
     , (PublicKey, base64url (claimedKeyRaw key))
     ]
+        <> kindMembers event.kind
+
+{- | What the Kind adds to the line: nothing for a lifecycle event, the
+addendum's members for a Mint.
+
+The declaration goes on Mint lines and on no others, and both halves are
+ADR-0006's. Emitting @v@ here keeps a lifecycle line byte-identical to what a
+paper-only implementation writes; withholding it would emit members a reader
+cannot account for under the vocabulary the line declares — the unread-claim
+failure ADR-0002 §5 exists to refuse, on our own output.
+-}
+kindMembers :: EventKind -> [(Member, MemberValue)]
+kindMembers = \case
+    Lifecycle -> []
+    Mint a ->
+        [ (Kind, memberValue "mint")
+        , (TargetHash, base64url (lineHashRaw a.target))
+        , (AttesterKey, base64url (claimedKeyRaw a.attesterKey))
+        , (AssertionSig, base64url (sigRaw a.assertionSig))
+        , (AuthenticatorData, base64url (authenticatorBytesRaw a.authenticatorData))
+        , (ClientDataJson, base64url (clientDataBytesRaw a.clientDataJson))
+        , (V, memberValue addendumRevision)
+        ]
+
+{- | The revision label the addendum's members declare: ADR-0006's @\"1\"@.
+
+A closed label from a closed set, compared by equality only — never parsed,
+never ordered. It is data this module writes, not text a caller chooses,
+which is what keeps "an entry declares the revision it conforms to" a rule
+the codec enforces rather than a convention callers follow.
+-}
+addendumRevision :: Text
+addendumRevision = "1"
 
 {- | The bytes of one AOF line: the object, minified, in the vocabulary's
 declaration order.

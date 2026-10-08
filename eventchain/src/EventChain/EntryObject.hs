@@ -49,10 +49,14 @@ is a name no other implementation can guess:
 * @kind@, @target_hash@ — the ADR-0001 addendum's, named in @docs/plan.md@.
   Additive, so upstream six-member files stay parseable.
 * @attester_key@ @assertion_sig@ @authenticator_data@ @client_data_json@ —
-  __chosen here, and not yet recorded anywhere else__. ADR-0002 fixes that a
-  Mint carries the WebAuthn envelope but names none of its members. These
-  four are this module's invention until @docs/wire-format.md@ (M4) makes
-  them normative, and until then they are the weakest thing in the format.
+  the Mint's WebAuthn envelope. First invented here, while ADR-0002 fixed
+  that a Mint carries the envelope but named no members; ADR-0007 has since
+  made these names and their encodings normative, and @docs/wire-format.md@
+  (M5) inherits them.
+* @v@ — the revision declaration, ADR-0006's. Its value names the member
+  vocabulary the entry conforms to; absence names the paper's, so the
+  Producer writes it only where the base six do not suffice — on Mint
+  lines, whose members a paper-only reader cannot account for.
 
 Every name is ASCII, and "EventChain.Canonical" leans on that: RFC 8785
 orders members by UTF-16 code unit, which a plain sort agrees with only
@@ -88,6 +92,8 @@ data Member
       AuthenticatorData
     | -- | The client data the authenticator hashed, base64url.
       ClientDataJson
+    | -- | The revision declaration (ADR-0006). Absent on base-vocabulary lines.
+      V
     deriving stock (Eq, Ord, Enum, Bounded, Show)
 
 -- | The member's name as it appears on the wire.
@@ -105,6 +111,7 @@ memberName = \case
     AssertionSig -> "assertion_sig"
     AuthenticatorData -> "authenticator_data"
     ClientDataJson -> "client_data_json"
+    V -> "v"
 
 {- | A member's value: a JSON string, always.
 

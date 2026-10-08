@@ -13,10 +13,12 @@ bytes are what the name says.
 module EventChain.Crypto.Types.Internal.Hash
     ( LineHash (..)
     , PayloadHash (..)
+    , ClientDataHash (..)
     , lineHashFromBytes
     , payloadHashFromBytes
     , lineHashRaw
     , payloadHashRaw
+    , clientDataHashRaw
     , sha256Length
     ) where
 
@@ -38,6 +40,18 @@ digest and never embeds it.
 -}
 newtype PayloadHash = PayloadHash ByteString
     deriving stock (Eq, Ord, Show)
+
+{- | A SHA-256 digest of a Mint envelope's client data: 32 bytes, the second
+half of the message a WebAuthn assertion signs.
+
+No claim-tier constructor, and the omission is the design: nothing on a line
+carries one of these. A claimed @prev_hash@ or @payload_hash@ is text a
+stranger wrote and 'lineHashFromBytes' admits the claim; this digest is only
+ever /computed/, by the kernel, from the transmitted client data — so the
+kernel is the only door and holding one proves it ran.
+-}
+newtype ClientDataHash = ClientDataHash ByteString
+    deriving stock (Eq, Show)
 
 -- | Bytes in a SHA-256 digest.
 sha256Length :: Int
@@ -74,3 +88,7 @@ lineHashRaw (LineHash bs) = bs
 -- | The digest's bytes, for encoding or the crypto edge.
 payloadHashRaw :: PayloadHash -> ByteString
 payloadHashRaw (PayloadHash bs) = bs
+
+-- | The digest's bytes, for the signed-message concatenation.
+clientDataHashRaw :: ClientDataHash -> ByteString
+clientDataHashRaw (ClientDataHash bs) = bs

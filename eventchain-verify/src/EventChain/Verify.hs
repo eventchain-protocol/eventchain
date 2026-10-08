@@ -35,14 +35,24 @@ module EventChain.Verify
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Data.List (zipWith4)
+import Data.List (zipWith5)
 import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import Data.Map.Lazy (Map)
 import Data.Map.Lazy qualified as Map
-import EventChain.Crypto (CryptoError (..), PublicKey, SigCheck (..), hashLines, publicKey, verifyBatch)
+import Data.Text (Text)
+import EventChain.Crypto (CryptoError (..), PublicKey, SigCheck (..), hashClientData, hashLines, publicKey, verifyBatch)
 import EventChain.Crypto.Types (ClaimedKey, LineHash, Sig, SignedBytes, lineHashFromBytes, sha256Length)
 import EventChain.Verify.Canonical (canonicalize, signingMessage)
-import EventChain.Verify.Types (ChainPosition, Entry (..), ProducedProof (..))
+import EventChain.Verify.EntryObject (EntryObject (..), MintMembers (..))
+import EventChain.Verify.Types
+    ( Attestation (..)
+    , ChainPosition
+    , Entry (..)
+    , EntryKind (..)
+    , ProducedProof (..)
+    , WebAuthnEnvelope (..)
+    )
+import EventChain.Verify.WebAuthn (EnvelopeFault (..), assertionMessage, envelopeChecks)
 import EventChain.Verify.Wire
     ( DecodeError
     , DecodedEntry
@@ -108,6 +118,11 @@ data Fault
       wrong except the claim.
       -}
       SignatureInvalid
+    | {- | A Mint's envelope failed one of ADR-0007's checks. One wrapper per
+      finding, so a report lists each the way it lists every other fault; the
+      check's own vocabulary is the Verifier's WebAuthn module's.
+      -}
+      AttestationFault EnvelopeFault
     deriving stock (Eq, Show)
 
 {- | What the fold established about one line.
@@ -190,15 +205,22 @@ fold prev (chunk : rest) = case chunkVerdicts prev chunk of
     (verdicts, Nothing) -> verdicts
     (verdicts, Just prev') -> verdicts <> fold prev' rest
 
-{- | One chunk: decode every line, hash them all in one call, judge them all in
-one call.
+{- | One chunk: decode every line, hash them all in one call, judge the
+Produced Proofs in one crossing and the Mint assertions in another.
+
+Two crossings rather than one interleaved batch, and the split is the
+batching working instead of failing: 'EventChain.Crypto.verifyBatch' reuses
+its verification context only while consecutive triples carry equal keys, an
+AOF is mostly runs of one Producer's key, and splicing each Mint's attester
+key into the middle of a run would break the run to save a call that costs
+less than the reuse it destroys.
 
 Returns the digest to carry forward, or 'Nothing' if the chunk halted on a
 malformed line, in which case no later chunk runs.
 -}
 chunkVerdicts :: LineHash -> [(ChainPosition, ByteString)] -> ([Verdict], Maybe LineHash)
 chunkVerdicts prev lns =
-    ( zipWith4 judge decoded hashes links attributions <> foldMap (pure . Malformed) halt
+    ( zipWith5 judge decoded hashes links attributions envelopes <> foldMap (pure . Malformed) halt
     , maybe (Just (lastOr prev hashes)) (const Nothing) halt
     )
   where
@@ -208,17 +230,25 @@ chunkVerdicts prev lns =
     hashes = hashLines (map decodedLine entries)
     links = chainFaults prev (zip entries hashes)
     attributions = attributionResults entries
+    envelopes = envelopeResults entries
 
-    judge (pos, d) h link attribution = case attribution of
-        Right sigFaults -> case nonEmpty (link <> sigFaults) of
-            Just faults -> Unsound pos faults
-            Nothing -> Sound VerifiedEntry{position = pos, entry = decodedEntry d, lineHash = h}
-        -- A chain fault was decided from hashing alone, which answered.
-        -- libcrypto's silence is about attribution, not about that finding,
-        -- so an unanswered line is Undecided only when nothing else said no.
-        Left err -> case nonEmpty link of
-            Just faults -> Unsound pos faults
-            Nothing -> Undecided pos err
+    -- Verdict precedence, uniform across every check the fold runs: a decided
+    -- fault outranks an unanswered question. A chain mismatch is established
+    -- by hashing and an envelope's structure by reading, both of which either
+    -- answer or throw -- so when a crypto seam goes silent on a line that
+    -- already has findings, the line is Unsound with what was found, and the
+    -- malfunction surfaces on the lines that had none.
+    judge (pos, d) h link attribution (envStructural, assertion) =
+        case [e | Left e <- [attribution, assertion]] of
+            [] -> case nonEmpty answered of
+                Just faults -> Unsound pos faults
+                Nothing -> Sound VerifiedEntry{position = pos, entry = decodedEntry d, lineHash = h}
+            err : _ -> case nonEmpty answered of
+                Just faults -> Unsound pos faults
+                Nothing -> Undecided pos err
+      where
+        answered = link <> envStructural <> foldMap answerOf [attribution, assertion]
+        answerOf = either (const []) id
 
     lastOr d [] = d
     lastOr _ hs = last hs
@@ -265,8 +295,11 @@ attributionResults decoded = case traverse (prepare promoted) decoded of
     Left err -> map (const (Left err)) decoded
     Right prepared -> case verifyBatch [t | Checkable t <- prepared] of
         Left err -> map (const (Left err)) decoded
-        Right checks -> stitch prepared checks
+        Right checks -> stitch [KeyOffCurve] answered prepared checks
   where
+    answered SigValid = []
+    answered SigInvalid = [SignatureInvalid]
+
     -- One promotion per distinct key in the chunk, never one per line.
     -- Promoting is a ~15 µs EVP_PKEY load against a ~34 µs verify, an AOF is
     -- mostly runs of one Producer's key, and 'verifyBatch' reuses its
@@ -304,25 +337,104 @@ prepare promoted d = case Map.findWithDefault (publicKey claim) claim promoted o
     claim = proof.publicKey
     message = signingMessage (canonicalize (decodedObject d))
 
-{- | Put the batch's answers back beside the lines they are about.
+{- | Put a batch's answers back beside the lines they are about.
 
 'verifyBatch' answers one t'SigCheck' per triple, in order, and lines whose key
 was rejected supplied no triple. A mismatched answer count in either direction
 is a broken contract, so it is an error rather than a verdict: a Verifier that
 quietly ran out of answers — or quietly had answers left over, which means the
 pairing above them slipped — would report faults against the wrong lines.
+
+Parameterized over the fault vocabulary because both signature streams stitch
+identically and mean differently: a Produced Proof's rejected key is
+'KeyOffCurve' where an assertion's is the envelope's own
+'AttesterKeyOffCurve', and the answer @no@ is 'SignatureInvalid' on one side
+of the seam and 'AssertionInvalid' on the other.
 -}
-stitch :: [Checkable] -> [SigCheck] -> [Either CryptoError [Fault]]
-stitch [] [] = []
-stitch (KeyRejected : more) checks = Right [KeyOffCurve] : stitch more checks
-stitch (Checkable _ : more) (c : checks) = Right (faults c) : stitch more checks
+stitch :: [Fault] -> (SigCheck -> [Fault]) -> [Checkable] -> [SigCheck] -> [Either CryptoError [Fault]]
+stitch rejectedKey answered = go
   where
-    faults SigValid = []
-    faults SigInvalid = [SignatureInvalid]
-stitch (Checkable _ : _) [] =
-    error "EventChain.Verify: verifyBatch answered fewer checks than it was given."
-stitch [] (_ : _) =
-    error "EventChain.Verify: verifyBatch answered more checks than it was given."
+    go [] [] = []
+    go (KeyRejected : more) checks = Right rejectedKey : go more checks
+    go (Checkable _ : more) (c : checks) = Right (answered c) : go more checks
+    go (Checkable _ : _) [] =
+        error "EventChain.Verify: verifyBatch answered fewer checks than it was given."
+    go [] (_ : _) =
+        error "EventChain.Verify: verifyBatch answered more checks than it was given."
+
+{- | What each line's Mint envelope establishes: structural findings, and the
+assertion's answer from the crypto seam. A lifecycle line contributes nothing
+to either.
+
+Structure and signature separate on purpose, because they fail differently:
+the checks of ADR-0007 are pure reads that always answer, while the assertion
+crosses the seam and can go unanswered — and 'chunkVerdicts' must not let a
+malfunction there swallow a finding here.
+
+The batching mirrors the Produced Proofs': every Mint's client data is hashed
+in one crossing ('hashClientData'), every assertion judged in another
+('verifyBatch'), and each attester key is promoted once per chunk however
+many Mints it signed.
+-}
+envelopeResults :: [DecodedEntry] -> [([Fault], Either CryptoError [Fault])]
+envelopeResults decoded = map result (zip [0 :: Int ..] decoded)
+  where
+    result (i, d) = case (decodedEntry d).kind of
+        LifecycleEntry -> ([], Right [])
+        MintEntry _ ->
+            ( Map.findWithDefault [] i structurals
+            , Map.findWithDefault (Right []) i answers
+            )
+
+    mints :: [(Int, Text, Attestation)]
+    mints =
+        [ (i, targetText d, a)
+        | (i, d) <- zip [0 ..] decoded
+        , MintEntry a <- [(decodedEntry d).kind]
+        ]
+
+    -- The codec builds a MintEntry from the line's own Mint members, so a
+    -- decoded Mint without them cannot happen; answering with an error keeps
+    -- the invariant loud instead of quietly re-encoding the decoded hash.
+    targetText d = case (decodedObject d).mint :: Maybe MintMembers of
+        Just m -> m.targetHash
+        Nothing -> error "EventChain.Verify: a Mint decoded without its members."
+
+    structurals =
+        Map.fromList
+            [ (i, map AttestationFault (envelopeChecks t a.envelope))
+            | (i, t, a) <- mints
+            ]
+
+    -- One digest crossing for the chunk's client data, then one message per
+    -- Mint: authenticatorData ‖ SHA-256(clientDataJSON), the claim the
+    -- Verifier's WebAuthn module owns.
+    digests = hashClientData [a.envelope.clientDataJson | (_, _, a) <- mints]
+    messages = zipWith (\(_, _, a) h -> assertionMessage a.envelope h) mints digests
+
+    promoted = Map.fromList [(a.attesterKey, publicKey a.attesterKey) | (_, _, a) <- mints]
+
+    answers :: Map Int (Either CryptoError [Fault])
+    answers = case traverse checkable (zip mints messages) of
+        Left err -> Map.fromList [(i, Left err) | (i, _, _) <- mints]
+        Right prepared -> case verifyBatch [t | (_, Checkable t) <- prepared] of
+            Left err -> Map.fromList [(i, Left err) | (i, _, _) <- mints]
+            Right checks ->
+                Map.fromList
+                    ( zip
+                        (map fst prepared)
+                        (stitch [AttestationFault AttesterKeyOffCurve] answered (map snd prepared) checks)
+                    )
+      where
+        answered SigValid = []
+        answered SigInvalid = [AttestationFault AssertionInvalid]
+
+    checkable ((i, _, a), message) = case Map.findWithDefault (publicKey claim) claim promoted of
+        Left KeyNotOnCurve -> Right (i, KeyRejected)
+        Left err -> Left err
+        Right k -> Right (i, Checkable (k, message, a.assertionSig))
+      where
+        claim = a.attesterKey
 
 {- | Split a list into fixed-size chunks, lazily.
 

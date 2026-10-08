@@ -32,3 +32,18 @@ packages:
 -- by hand, and a fresh clone running `cabal test all` saw two structural checks
 -- and no behaviour.
 tests: True
+
+-- The mint oracle (ADR-0007) is the one place tweag `webauthn` — and, through
+-- it, crypton — enters a build, and only a test build: eventchain's
+-- mint-oracle suite. Its 0.11.0.0 release caps base <4.20, predating this
+-- project's GHC; the relaxations are scoped to that package (plus jose's own
+-- base cap), and its neighbours are held inside the release's own windows:
+-- newer crypton-x509s switched to the crypton-asn1 fork while webauthn 0.11
+-- still imports the legacy asn1-types, and jose 0.12 changed the JWT API out
+-- from under it — either mix is a type error in its build, not ours.
+allow-newer: webauthn:*, jose:base, jose:template-haskell
+constraints:
+    crypton-x509 <1.8
+    , crypton-x509-store <1.7
+    , crypton-x509-validation <1.7
+    , jose <0.12

@@ -67,6 +67,7 @@ genEvent label = do
             , payloadHash = hashOf digest
             , payloadRef = payloadRef ref
             , prevHash = genesisHash
+            , kind = Lifecycle
             }
   where
     hashOf bs = case payloadHashFromBytes bs of

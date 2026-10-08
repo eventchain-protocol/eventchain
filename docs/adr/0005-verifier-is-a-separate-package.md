@@ -98,5 +98,5 @@ builds a reader from the document alone.
   ADR — the argument here is precisely that a convention would not survive a
   year — so it is recorded rather than quietly corrected.
 - Every rule the Producer enforces about a line's bytes must reach
-  `docs/wire-format.md` (M4), because a third party cannot read our code —
-  and now neither can our Verifier.
+  `docs/wire-format.md` (M5, where the plan places the document), because a
+  third party cannot read our code — and now neither can our Verifier.

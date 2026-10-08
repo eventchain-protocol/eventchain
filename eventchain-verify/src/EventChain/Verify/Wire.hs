@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 {- | The JSON Lines codec, decode direction: file bytes to lines, and a line to
 the Entry it claims.
 
@@ -18,9 +20,11 @@ nothing to hash; one handing us both bytes and a structure would supply an
 unverified pairing, which is the forgery the type exists to refuse.
 
 /Strict on purpose./ Unknown member, duplicate member, non-string value, missing
-member, bad base64url, wrong length: all hard errors carrying the position of
-the line that caused them. A Verifier that repaired or ignored any of these
-would be verifying a line other than the one in the file.
+member, unknown revision label, a member outside the line's declared revision
+or its declared Kind, an unknown Kind, bad base64url, wrong length: all hard
+errors carrying the position of the line that caused them. A Verifier that
+repaired or ignored any of these would be verifying a line other than the one
+in the file.
 -}
 module EventChain.Verify.Wire
     ( -- * The pairing
@@ -55,13 +59,27 @@ import Data.Text.Encoding qualified as TE
 import EventChain.Crypto.Types
     ( LineBytes
     , ShapeError
+    , authenticatorBytes
     , claimedKey
+    , clientDataBytes
     , lineBytes
     , lineHashFromBytes
     , payloadHashFromBytes
     , sigFromRaw
     )
-import EventChain.Verify.EntryObject (EntryObject (..), Member (..), memberFromName)
+import EventChain.Verify.EntryObject
+    ( EntryObject (..)
+    , Member (..)
+    , MintMembers (..)
+    , Revision (..)
+    , memberFromName
+    , memberInRevision
+    , revisionFromLabel
+    )
+import EventChain.Verify.Types.Internal.Attestation
+    ( Attestation (..)
+    , WebAuthnEnvelope (..)
+    )
 import EventChain.Verify.Types.Internal.Entry
     ( ChainPosition
     , Entry (..)
@@ -169,7 +187,7 @@ data LineError
       LineNotAnObject
     | -- | Bytes follow the object that are not whitespace.
       LineTrailingContent
-    | -- | A member this Verifier has no account of. Carries the name as written.
+    | -- | A member no revision of the format defines. Carries the name as written.
       UnknownMember Text
     | {- | A member appears twice. Fatal: the line means two things, and a
       signature would cover one of them arbitrarily.
@@ -179,6 +197,24 @@ data LineError
       NonStringValue Member
     | -- | The line omits a member the format requires.
       MissingMember Member
+    | {- | The @v@ member names a revision this Verifier does not know.
+      PA-11's rule, at home: reject what cannot be read rather than misread it.
+      -}
+      UnknownRevision Text
+    | {- | A member the format defines, on a line whose declared revision does
+      not (ADR-0006) — @kind@ on an undeclared line is the live case. The same
+      unread-claim rejection as 'UnknownMember', decided against the line's own
+      declaration instead of against everything this Verifier knows.
+      -}
+      MemberOutsideRevision Member
+    | {- | A Kind-specific member on a line that declares no Kind — a
+      @target_hash@ with no @kind@ to give it meaning. The revision admits the
+      name; nothing on the line accounts for it, and signing over what was not
+      read is the failure ADR-0002 §5 exists to refuse.
+      -}
+      MemberOutsideKind Member
+    | -- | The @kind@ member's value names no Kind this Verifier knows.
+      UnknownKind Text
     | -- | A member's text is not unpadded base64url. Carries the decoder's complaint.
       NotBase64Url Member Text
     | {- | A member's bytes are the wrong shape — a hash that is not 32 bytes, a
@@ -287,19 +323,34 @@ trailing rest
   where
     isJsonSpace w = w == 0x20 || w == 0x09 || w == 0x0a || w == 0x0d
 
-{- | Every member present, or the first one that is not.
+{- | The vocabulary rules, then completeness: which names this line may carry,
+and whether every required one is there.
 
-Ordered by the vocabulary so the complaint about a line missing several is
-stable rather than dependent on a 'Map''s internals.
+Three tiers, in the only order that makes each decidable (ADR-0006):
+
+1. /The declaration./ @v@ absent declares the base revision; present, its
+   label must name a revision from the closed set, whole and by equality.
+2. /The declared vocabulary./ Every member on the line must be in it. This is
+   where @kind@ on an undeclared line dies — the closed-vocabulary rule of
+   ADR-0002 §5, closing over the vocabulary the line itself selected.
+3. /Completeness./ The six are always required. The Mint members exist whole
+   or not at all: @kind@ present requires every one of them, and a
+   Kind-specific member without a @kind@ accounts for nothing and is refused.
+
+Errors are ordered by the vocabulary so the complaint about a line with
+several problems is stable rather than dependent on a 'Map''s internals.
 -}
 completeObject :: Map Member Text -> Either LineError EntryObject
 completeObject members = do
+    revision <- declared
+    mapM_ (admitted revision) (Map.keys members)
     entryIdText <- need EntryId
     payloadHashText <- need PayloadHash
     payloadRefText <- need PayloadRef
     prevHashText <- need PrevHash
     publicKeyText <- need PublicKey
     signatureText <- need Signature
+    mintGroup <- mintPresence
     pure
         EntryObject
             { entryId = entryIdText
@@ -308,9 +359,51 @@ completeObject members = do
             , prevHash = prevHashText
             , publicKey = publicKeyText
             , signature = signatureText
+            , v = Map.lookup V members
+            , mint = mintGroup
             }
   where
     need m = maybe (Left (MissingMember m)) Right (Map.lookup m members)
+
+    -- Absence declares the base revision; `revisionFromLabel` reads labels,
+    -- and absence is not one.
+    declared :: Either LineError Revision
+    declared = case Map.lookup V members of
+        Nothing -> Right Base
+        Just label -> maybe (Left (UnknownRevision label)) Right (revisionFromLabel label)
+
+    admitted revision m
+        | memberInRevision revision m = Right ()
+        | otherwise = Left (MemberOutsideRevision m)
+
+    -- The Kind's members, whole or absent. `kind` anchors the group: with it,
+    -- every Mint member is required; without it, any of them is unaccounted
+    -- for. Which Kind the value names is the reading tier's question, so a
+    -- line saying `"kind":"lunch"` groups here and fails there.
+    mintPresence :: Either LineError (Maybe MintMembers)
+    mintPresence = case Map.lookup Kind members of
+        Just kindText -> do
+            targetHashText <- need TargetHash
+            attesterKeyText <- need AttesterKey
+            assertionSigText <- need AssertionSig
+            authenticatorDataText <- need AuthenticatorData
+            clientDataJsonText <- need ClientDataJson
+            pure
+                ( Just
+                    MintMembers
+                        { kind = kindText
+                        , targetHash = targetHashText
+                        , attesterKey = attesterKeyText
+                        , assertionSig = assertionSigText
+                        , authenticatorData = authenticatorDataText
+                        , clientDataJson = clientDataJsonText
+                        }
+                )
+        Nothing -> case filter (`Map.member` members) kindSpecific of
+            [] -> Right Nothing
+            stray : _ -> Left (MemberOutsideKind stray)
+      where
+        kindSpecific = [TargetHash, AttesterKey, AssertionSig, AuthenticatorData, ClientDataJson]
 
 {- | What the line's text means: base64url resolved, lengths and encodings
 checked.
@@ -329,6 +422,7 @@ readEntry o = do
     payload <- member PayloadHash payloadHashFromBytes o.payloadHash
     key <- member PublicKey claimedKey o.publicKey
     sig <- member Signature sigFromRaw o.signature
+    entryKind <- maybe (Right LifecycleEntry) mintKind o.mint
     pure
         Entry
             { entryId = entryId o.entryId
@@ -336,14 +430,38 @@ readEntry o = do
             , payloadRef = payloadRef o.payloadRef
             , prevHash = prev
             , producedProof = ProducedProof{publicKey = key, signature = sig}
-            , -- Every v0 line is a lifecycle event. `kind` is an unknown member
-              -- until M4 adds it, so a Mint does not decode here rather than
-              -- decoding as the wrong thing.
-              kind = LifecycleEntry
+            , kind = entryKind
             }
   where
     member :: Member -> (ByteString -> Either ShapeError a) -> Text -> Either LineError a
     member m f text = first (MemberWrongShape m) . f =<< unbase64 m text
+
+    -- The one Kind the format defines. The envelope's two blobs decode from
+    -- base64url and stay opaque — whether they spell an assertion over the
+    -- target is the WebAuthn checks' question (ADR-0007), asked of every
+    -- decoded Mint by the fold, never here.
+    mintKind :: MintMembers -> Either LineError EntryKind
+    mintKind m
+        | m.kind /= "mint" = Left (UnknownKind m.kind)
+        | otherwise = do
+            target <- member TargetHash lineHashFromBytes m.targetHash
+            akey <- member AttesterKey claimedKey m.attesterKey
+            asig <- member AssertionSig sigFromRaw m.assertionSig
+            authData <- authenticatorBytes <$> unbase64 AuthenticatorData m.authenticatorData
+            cData <- clientDataBytes <$> unbase64 ClientDataJson m.clientDataJson
+            pure
+                ( MintEntry
+                    Attestation
+                        { target = target
+                        , attesterKey = akey
+                        , assertionSig = asig
+                        , envelope =
+                            WebAuthnEnvelope
+                                { authenticatorData = authData
+                                , clientDataJson = cData
+                                }
+                        }
+                )
 
 {- | A member's text as the bytes it encodes.
 
