@@ -1,0 +1,80 @@
+cabal-version:      3.14
+name:               eventchain-gates
+version:            0.1.0.0
+synopsis:           The structural gates, as tests that actually run
+description:
+    Two assertions that are not about behaviour, and that a convention would not
+    survive a year: @eventchain-verify@ does not depend on @eventchain@, and no
+    library imports the JCS oracle. Both are the load-bearing kind — the cheapest
+    way for a future contributor to fix a divergence is to share the code, which
+    passes every test while destroying the evidence those tests are for
+    (ADR-0005).
+
+    They live here as test suites so that @cabal test all@ is what enforces them.
+    A fresh clone gets them by running the tests it would run anyway; nothing has
+    to be installed, configured, or remembered.
+
+    __Never depend on this package.__ It exists to grade the others and ships
+    nothing. It is not published, so @cabal check@ has no opinion worth hearing
+    about it.
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Testing
+build-type:         Simple
+tested-with:        GHC ==9.12.4
+
+-- Each gate is its own test suite on purpose: they answer different questions,
+-- so each must be able to fail on its own rather than hide behind the other.
+-- `type` is not settable in a common stanza (cabal ignores it with a warning),
+-- so each suite declares its own.
+common gate
+    hs-source-dirs:     test
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+-- Reads the resolved install plan, not `build-depends`: the edge that matters is
+-- the one somebody adds transitively, and `eventchain` arriving via a third
+-- package would pass a grep while voiding the gate.
+test-suite verifier-independence
+    import:             gate
+    type:               exitcode-stdio-1.0
+    main-is:            VerifierIndependence.hs
+    other-modules:
+        Gate.Plan
+        Gate.Root
+
+    build-depends:
+        , aeson      >=2.3  && <2.4
+        , base       >=4.20 && <5
+        , bytestring >=0.12 && <0.14
+        , containers >=0.7  && <0.9
+        , directory  >=1.3  && <1.4
+        , filepath   >=1.4  && <1.6
+        , text       >=2.1  && <2.3
+
+-- Matches import lines rather than the bare string: `EventChain.Canonical`'s
+-- haddock names the oracle in prose to record where aeson and RFC 8785 disagree,
+-- and that prose is wanted. Importing it is the thing being forbidden.
+test-suite no-jcs-oracle-import
+    import:             gate
+    type:               exitcode-stdio-1.0
+    main-is:            NoJcsOracleImport.hs
+    other-modules:      Gate.Root
+    build-depends:
+        , base       >=4.20 && <5
+        , bytestring >=0.12 && <0.14
+        , directory  >=1.3  && <1.4
+        , filepath   >=1.4  && <1.6
+        , text       >=2.1  && <2.3

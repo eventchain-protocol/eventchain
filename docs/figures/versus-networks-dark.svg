@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" role="img">
+<rect width="720" height="420" fill="#1a1a19"/>
+<text x="24.0" y="30.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="15" fill="#f0efec" text-anchor="start" font-weight="600" >Verifying on one machine against what networks write</text>
+<text x="24.0" y="48.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >Per second, log scale. Networks: transactions committed by consensus. EventChain: Entries checked from a file.</text>
+<line x1="240.0" y1="64" x2="240.0" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="240.0" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">1</text>
+<line x1="313.3" y1="64" x2="313.3" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="313.3" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">10</text>
+<line x1="386.7" y1="64" x2="386.7" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="386.7" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">100</text>
+<line x1="460.0" y1="64" x2="460.0" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="460.0" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">1K</text>
+<line x1="533.3" y1="64" x2="533.3" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="533.3" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">10K</text>
+<line x1="606.7" y1="64" x2="606.7" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="606.7" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">100K</text>
+<line x1="680.0" y1="64" x2="680.0" y2="342" stroke="#2c2c2a" stroke-width="1"/>
+<text x="680.0" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">1M</text>
+<text x="228.0" y="91.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="600" >EventChain Verifier · 12 cores</text>
+<circle cx="613.9" cy="87.0" r="6" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+<text x="601.9" y="91.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">125,500 entries/s</text>
+<text x="228.0" y="121.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Hyperledger Fabric (lab)</text>
+<line x1="495.0" y1="117.0" x2="555.4" y2="117.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="555.4" cy="117.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="495.0" cy="117.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="151.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Solana</text>
+<line x1="482.1" y1="147.0" x2="536.4" y2="147.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="536.4" cy="147.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="482.1" cy="147.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="470.1" y="151.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">2,000</text>
+<text x="228.0" y="181.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >BNB Chain</text>
+<line x1="410.7" y1="177.0" x2="498.0" y2="177.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="498.0" cy="177.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="410.7" cy="177.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="211.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Sui</text>
+<line x1="395.5" y1="207.0" x2="465.8" y2="207.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="465.8" cy="207.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="395.5" cy="207.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="241.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Aptos</text>
+<line x1="393.8" y1="237.0" x2="541.7" y2="237.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="541.7" cy="237.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="393.8" cy="237.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="271.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Ethereum</text>
+<line x1="339.4" y1="267.0" x2="377.5" y2="267.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="377.5" cy="267.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="339.4" cy="267.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="301.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Hedera</text>
+<line x1="304.4" y1="297.0" x2="498.0" y2="297.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="498.0" cy="297.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="304.4" cy="297.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<text x="228.0" y="331.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="end" font-weight="normal" >Bitcoin</text>
+<line x1="303.4" y1="327.0" x2="322.8" y2="327.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
+<circle cx="322.8" cy="327.0" r="6" fill="#898781" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="303.4" cy="327.0" r="6" fill="#c3c2b7" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="29" cy="382" r="5" fill="#3987e5"/>
+<text x="40.0" y="386.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >EventChain, measured (-N12)</text>
+<circle cx="255" cy="382" r="5" fill="#c3c2b7"/>
+<text x="266.0" y="386.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >Network, sustained (trailing hour)</text>
+<circle cx="495" cy="382" r="5" fill="#898781"/>
+<text x="506.0" y="386.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >Network, peak (100 blocks, or lab)</text>
+<text x="24.0" y="408.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >Sources in the README table. Different quantities on one axis: a network's rate is bounded by consensus, a verifier's by one CPU.</text>
+</svg>

@@ -1,0 +1,155 @@
+cabal-version:      3.14
+name:               eventchain-verify
+version:            0.1.0.0
+synopsis:
+    Offline verifier for EventChain append-only event files
+description:
+    The reference Verifier for the EventChain protocol: AOF bytes in, a typed
+    per-entry report out — chain continuity (SHA-256), attribution
+    (ECDSA-P256), payload commitments, and the level of proof each Entry
+    stands at.
+
+    Pure by construction: file bytes in, verdict out. No clock, no network, no
+    config — and no dependency on the Producer. This package shares no format
+    logic with @eventchain@ (ADR-0005): its member vocabulary, its RFC 8785
+    canonicalizer, its line codec and its Entry model are written
+    independently and re-derived from the normative wire-format document. That
+    is what makes the two sides agreeing evidence of conformance rather than
+    of self-consistency, and it is why the missing @build-depends@ edge is
+    asserted by @cabal test all@ rather than left to convention.
+
+    It accepts untrusted JSON because that is inherently the job.
+
+    Protocol specification: <https://eventchain-protocol.github.io/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+-- Only what is built; see eventchain-crypto.cabal for why this narrowed.
+tested-with:        GHC ==9.12.4
+
+-- One exposed facade over hidden type modules, as `eventchain-crypto` does
+-- and as aeson does for `Data.Aeson.Types`. The claim tier's constructors
+-- ship hidden: an Entry may come into being only in the line codec, and
+-- `other-modules` is what makes that true at the package edge instead of by
+-- agreement between contributors.
+library
+    hs-source-dirs:     src
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+    exposed-modules:
+        EventChain.Verify
+        EventChain.Verify.Canonical
+        EventChain.Verify.EntryObject
+        EventChain.Verify.Minted
+        EventChain.Verify.Types
+        EventChain.Verify.WebAuthn
+        EventChain.Verify.Wire
+
+    other-modules:
+        EventChain.Verify.Types.Internal.Attestation
+        EventChain.Verify.Types.Internal.Entry
+
+    -- `eventchain` is absent and must stay absent: that edge's absence is the
+    -- gate (gates:verifier-independence, which walks the resolved install plan,
+    -- so adding it through a third package fails too). webauthn never arrives:
+    -- ADR-0007 confines it to one test suite as the oracle grading the
+    -- hand-written mint check, so this library builds without it and without
+    -- crypton. zlib arrives with gzip.
+    --
+    -- `parallel` is how the fold fans chunks across cores without leaving pure
+    -- code: a bounded spark buffer over an already-lazy list, which is the
+    -- "bounded worker pool" ADR-0004 asks for in the one form that keeps
+    -- `verify`'s type. docs/plan.md had booked `unliftio` for this; its pools
+    -- run in IO, and a reference verifier that is bytes in, verdicts out
+    -- cannot be stated through them. Nothing here needs NFData: a verdict's
+    -- constructor is only reachable by running every check behind it, so
+    -- forcing to WHNF is forcing the work.
+    --
+    -- aeson is here as the *tokenizer* and never as `decode`. That is a
+    -- correctness decision: `Data.Aeson.Decoding.Conversion` documents that "the
+    -- first duplicate key in objects wins", so `decode` would read a line
+    -- carrying two `prev_hash` members as one of them arbitrarily -- the exact
+    -- ambiguity the format must reject. `Data.Aeson.Decoding.Tokens` preserves
+    -- both, so the duplicate is fatal. `Data.Aeson.RFC8785` is the JCS oracle and
+    -- this library may never import it (gates:no-jcs-oracle-import): the grader
+    -- is not the graded.
+    --
+    -- `base64` earns its stated justification here and only here. It was picked
+    -- for being typed and rejecting non-canonical input, which is a property of
+    -- its decoders -- and this is the side that decodes.
+    build-depends:
+        , aeson             >=2.3  && <2.4
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , containers        >=0.7  && <0.9
+        , eventchain-crypto >=0.1  && <0.2
+        , parallel          >=3.2  && <3.4
+        , text              >=2.1  && <2.3
+
+test-suite conformance
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Main.hs
+    default-language:   GHC2024
+
+    -- Identical to the library's list on purpose: `StrictData` changes
+    -- evaluation, so a suite built without it exercises different code from the
+    -- one that ships.
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Verify.Canonical
+        Test.EventChain.Verify.Fold
+        Test.EventChain.Verify.Mint
+        Test.EventChain.Verify.Wire
+
+    -- `eventchain` is absent here too, and the gate seeds on every unit of this
+    -- package rather than only the library -- so these tests cannot ask the
+    -- Producer for an AOF and must read the committed vector instead. That is
+    -- the wall doing its job: what the fold verifies is a file, which is the
+    -- position a stranger is in.
+    --
+    -- aeson is the JCS oracle, and grading here is exactly where it belongs: the
+    -- library may never import `Data.Aeson.RFC8785` (gates:no-jcs-oracle-import),
+    -- because a canonicalizer graded by a copy of itself is graded by nothing.
+    build-depends:
+        , aeson             >=2.3  && <2.4
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , containers        >=0.7  && <0.9
+        , directory         >=1.3  && <1.4
+        , eventchain-crypto
+        , eventchain-verify
+        , filepath          >=1.5  && <1.6
+        , hedgehog          >=1.5  && <1.8
+        , tasty             >=1.5  && <1.6
+        , tasty-hedgehog    >=1.4  && <1.5
+        , tasty-hunit       >=0.10 && <0.11
+        , text              >=2.1  && <2.3

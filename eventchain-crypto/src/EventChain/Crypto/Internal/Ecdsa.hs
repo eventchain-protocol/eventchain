@@ -1,0 +1,534 @@
+-- This file is long because keys, signing and verification share one FFI plumbing vocabulary (own/buildParams/fromdata) that must not scatter, and each decision carries its measurement in haddock (ADR-0004).
+{-# LANGUAGE OverloadedStrings #-}
+
+{- | ECDSA over P-256: keys that have been proven, signatures that are
+deterministic, and the verification that discharges a claim.
+
+== Why a key is a handle
+
+@EVP_PKEY_fromdata@ costs __14.95 µs__ against a __34 µs__ verify on this
+project's dev machine. Loading per verify runs at 21.5k verify/s against
+ADR-0004's 30.6k baseline — a 30% miss, outside M1's own ±20% bar. The cheaper
+trick, re-pointing a scratch key with @EVP_PKEY_set1_encoded_public_key@ (7.63 µs),
+still misses at 23.5k/s. Only a key loaded once and reused makes the bar, at
+29.5k/s.
+
+So a t'PublicKey' /is/ the loaded @EVP_PKEY@. That is forced by measurement, and
+it is also what the type wanted to be: the fact is the claim plus the check that
+discharged it, and here the check leaves an artifact worth keeping.
+
+Sharing one across threads is measured at 7.8× on 8 threads with no contention,
+and libcrypto's own contract says why: "A given object may be used concurrently on
+multiple threads by non-mutating functions", and verification never mutates the
+key. The mutable state is the @EVP_PKEY_CTX@, which each batch builds for itself
+inside the call — the price of a rule that reads "Contexts MUST NOT be shared
+between threads", paid once per run of the same key rather than once per line.
+
+== Why verify takes a digest
+
+@EVP_DigestVerify@ hashes the message itself, and charges for the convenience:
+it is one-shot — one init per verify — and every init fetches SHA-256 by name
+and builds a fresh internal @EVP_PKEY_CTX@, per-line costs on a 34 µs kernel.
+@EVP_PKEY_verify@ inverts the shape. The context is initialized once and then
+"can be called more than once on the same context to have several one-shot
+operations performed using the same parameters" (@EVP_PKEY_verify(3ssl)@).
+What it wants in exchange is the digest rather than the message — and the
+digest is SHA-256, which this package already computes at GB/s in batch. So
+the chunk prehashes its messages through the hashing kernel and hands the
+curve math 32-byte values.
+
+== Why DER never leaves
+
+The AOF carries raw 64-byte @r‖s@ (ADR-0002). libcrypto speaks DER at both ends:
+it emits DER when signing and demands DER when verifying. Both conversions happen
+here, which is what "@eventchain-crypto@ normalizes it away at those two sources"
+means. They are not symmetric: signing, once per append, decodes libcrypto's DER
+through libcrypto's own @d2i@; verification, per line at scale, /encodes/ DER in
+pure Haskell ('sigToDer'), because the grammar is two integers in a sequence and
+the FFI detour it replaced was most of a verify's non-curve cost.
+-}
+module EventChain.Crypto.Internal.Ecdsa
+    ( -- * Keys
+      PublicKey
+    , publicKey
+    , publicKeyClaim
+    , publicKeyRaw
+    , PrivateKey
+    , privateKey
+    , privateKeyPublic
+
+      -- * Signing and verification
+    , SigCheck (..)
+    , sign
+    , verifyBatch
+    ) where
+
+import Control.Exception (mask_)
+import Control.Monad (when)
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.ByteString.Internal qualified as BSI
+import Data.ByteString.Unsafe qualified as BSU
+import EventChain.Crypto.Internal.Digest (digestChunk)
+import EventChain.Crypto.Internal.Error (CryptoError (..))
+import EventChain.Crypto.Internal.Foreign
+import EventChain.Crypto.Types.Internal.Bytes (SignedBytes, signedBytesRaw)
+import EventChain.Crypto.Types.Internal.Key
+    ( ClaimedKey
+    , Sig
+    , claimedKey
+    , claimedKeyRaw
+    , rawSigLength
+    , sigFromRaw
+    , sigRaw
+    )
+import Foreign.C.String (CString, withCString)
+import Foreign.C.Types (CInt)
+import Foreign.ForeignPtr (FinalizerPtr, ForeignPtr, newForeignPtr, withForeignPtr)
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Utils (with)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
+import Foreign.Storable (peek, poke)
+import System.IO.Unsafe (unsafePerformIO)
+
+-- Types ----------------------------------------------------------------------
+
+{- | A public key proven to be a point on P-256.
+
+Only this module can build one, and building one /is/ the proof: the 33 bytes
+were decompressed, which cannot succeed for an @x@ with no @y@ on the curve.
+
+Carries the t'ClaimedKey' it was promoted from — the fact is the claim plus the
+check — and compares on that. Two 'PublicKey's are equal when they name the same
+point, not when they are the same allocation.
+-}
+data PublicKey = PublicKey (ForeignPtr EVP_PKEY) ClaimedKey
+
+instance Eq PublicKey where
+    a == b = publicKeyClaim a == publicKeyClaim b
+
+instance Ord PublicKey where
+    compare a b = compare (publicKeyClaim a) (publicKeyClaim b)
+
+instance Show PublicKey where
+    show k = "PublicKey " <> show (publicKeyClaim k)
+
+{- | A P-256 private key, and the public point that belongs to it.
+
+No 'Show': this is the one secret in the system, and a type that prints itself
+ends up in a log.
+
+The point is carried because libcrypto will not derive it. Measured on 3.6.2:
+@EVP_PKEY_fromdata@ given a scalar alone succeeds and signs correctly, but the
+public-key parameter then reads back /absent/. A Producer restoring a key from a
+stored scalar would be able to sign entries and unable to say which key signed
+them. So 'privateKey' derives the point itself and 'privateKeyPublic' is total.
+-}
+data PrivateKey = PrivateKey (ForeignPtr EVP_PKEY) ClaimedKey
+
+{- | Did a signature verify?
+
+Not a t'Bool' (ADR-0003 rule 5). The difference that matters is not true/false —
+it is that neither of these is an error. A signature that does not verify is a
+fact about the entry; libcrypto failing to answer is a 'CryptoError'. Collapsing
+them would report a broken installation as a forged AOF.
+-}
+data SigCheck
+    = -- | The signature is the signer's, over exactly these bytes.
+      SigValid
+    | -- | It is not. Nothing is wrong except the claim.
+      SigInvalid
+    deriving stock (Eq, Show)
+
+{- | The order of P-256's group, big-endian.
+
+A private scalar must be in @[1, n-1]@. Because both this and a scalar are 32
+big-endian bytes, the numeric comparison /is/ the lexicographic one, so the check
+is a 'ByteString' comparison and needs no bignum and no FFI call.
+
+Checked against @openssl ecparam -name prime256v1@ rather than recalled.
+-}
+p256Order :: ByteString
+p256Order =
+    BS.pack
+        [ 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0x00
+        , 0x00
+        , 0x00
+        , 0x00
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xFF
+        , 0xBC
+        , 0xE6
+        , 0xFA
+        , 0xAD
+        , 0xA7
+        , 0x17
+        , 0x9E
+        , 0x84
+        , 0xF3
+        , 0xB9
+        , 0xCA
+        , 0xC2
+        , 0xFC
+        , 0x63
+        , 0x25
+        , 0x51
+        ]
+
+-- | Bytes in a P-256 private scalar.
+scalarLength :: Int
+scalarLength = 32
+
+-- Keys -----------------------------------------------------------------------
+
+{- | Promote a claimed key to one proven on the curve.
+
+The promotion is the decompression. A compressed point supplies only @x@; @y@ is
+solved for, and roughly half of all @x@ have no solution — so a claim that
+survives is on the curve by construction, not by a check bolted alongside.
+@EVP_PKEY_public_check@ afterwards measures free and adds nothing here: P-256 has
+cofactor 1, so its "full" check reduces to not-infinity, in-range and on-curve,
+and a 33-byte encoding cannot be the point at infinity.
+-}
+publicKey :: ClaimedKey -> Either CryptoError PublicKey
+publicKey claimed = unsafePerformIO $ do
+    c_ERR_clear_error
+    built <- buildParams $ \bld ->
+        withNamed "group" $ \g ->
+            withCString "prime256v1" $ \curve -> do
+                okG <- c_OSSL_PARAM_BLD_push_utf8_string bld g curve 0
+                okP <- withNamed "pub" $ \pubName ->
+                    BSU.unsafeUseAsCStringLen (claimedKeyRaw claimed) $ \(p, n) ->
+                        c_OSSL_PARAM_BLD_push_octet_string bld pubName (castPtr p) (fromIntegral n)
+                pure (okG == 1 && okP == 1)
+    case built of
+        Nothing -> Left <$> openSslFailed
+        Just params ->
+            fromdata evpPkeyPublicKey params >>= \case
+                -- fromdata's only plausible failure on 33 well-formed bytes is
+                -- that they name no point. Any other cause would be a
+                -- malfunction, and the error code is carried either way.
+                Nothing -> pure (Left KeyNotOnCurve)
+                Just k -> pure (Right (PublicKey k claimed))
+{-# NOINLINE publicKey #-}
+
+-- | The claim this key was promoted from.
+publicKeyClaim :: PublicKey -> ClaimedKey
+publicKeyClaim (PublicKey _ c) = c
+
+-- | The key's compressed point bytes.
+publicKeyRaw :: PublicKey -> ByteString
+publicKeyRaw = claimedKeyRaw . publicKeyClaim
+
+{- | Take 32 bytes as a private scalar, deriving the point that belongs to it.
+
+Rejects zero and anything at or beyond the group order before touching libcrypto:
+those are not private keys, and @EC_POINT_mul@ would reduce them modulo the order
+rather than complain, silently signing as some other key.
+-}
+privateKey :: ByteString -> Either CryptoError PrivateKey
+privateKey scalar
+    | BS.length scalar /= scalarLength = Left (ScalarWrongLength (BS.length scalar))
+    | BS.all (== 0) scalar = Left ScalarRejected
+    | scalar >= p256Order = Left ScalarRejected
+    | otherwise = unsafePerformIO $ do
+        c_ERR_clear_error
+        withBignum scalar $ \bn -> do
+            derived <- derivePoint bn
+            case derived of
+                Left err -> pure (Left err)
+                Right pt -> case claimedKey pt of
+                    -- A 33-byte compressed point is what point2oct was asked
+                    -- for; anything else means the scalar produced infinity.
+                    Left _ -> pure (Left ScalarRejected)
+                    Right claimed -> do
+                        built <- buildParams $ \bld ->
+                            withNamed "group" $ \g ->
+                                withCString "prime256v1" $ \curve -> do
+                                    okG <- c_OSSL_PARAM_BLD_push_utf8_string bld g curve 0
+                                    okD <- withNamed "priv" $ \privName -> c_OSSL_PARAM_BLD_push_BN bld privName bn
+                                    okP <- withNamed "pub" $ \pubName ->
+                                        BSU.unsafeUseAsCStringLen pt $ \(p, n) ->
+                                            c_OSSL_PARAM_BLD_push_octet_string bld pubName (castPtr p) (fromIntegral n)
+                                    pure (okG == 1 && okD == 1 && okP == 1)
+                        case built of
+                            Nothing -> Left <$> openSslFailed
+                            Just params ->
+                                fromdata evpPkeyKeypair params >>= \case
+                                    Nothing -> pure (Left ScalarRejected)
+                                    Just k -> pure (Right (PrivateKey k claimed))
+{-# NOINLINE privateKey #-}
+
+-- | The public key that belongs to this private one. Total: it was derived at construction.
+privateKeyPublic :: PrivateKey -> ClaimedKey
+privateKeyPublic (PrivateKey _ pt) = pt
+
+-- Signing --------------------------------------------------------------------
+
+{- | Sign with a deterministic nonce, per RFC 6979.
+
+Deterministic is the decision (ADR-0004), and it is also what makes this function
+honest as a pure one: the same key and message give the same signature, always.
+Verified against RFC 6979 §A.2.5, whose @r@ and @s@ this reproduces exactly.
+
+@nonce-type@ = 1 selects it, and @digest@ must be set alongside or, in the
+provider docs' words, "deterministic nonce generation will fail" — a failure mode
+discovered by someone hitting it, not theorised.
+
+Not batched: a Producer signs once per append, and the chain makes appends
+sequential anyway. The batching rule is about the Verifier's hot path.
+-}
+sign :: PrivateKey -> SignedBytes -> Either CryptoError Sig
+sign (PrivateKey pkey _) message = unsafePerformIO $ do
+    c_ERR_clear_error
+    built <- buildParams $ \bld -> do
+        okN <- withNamed "nonce-type" $ \n -> c_OSSL_PARAM_BLD_push_uint bld n 1
+        okD <- withNamed "digest" $ \d -> withCString "SHA256" $ \sha -> c_OSSL_PARAM_BLD_push_utf8_string bld d sha 0
+        pure (okN == 1 && okD == 1)
+    case built of
+        Nothing -> Left <$> openSslFailed
+        Just params -> withForeignPtr params $ \ps -> do
+            ctx <- newMdCtx
+            withForeignPtr ctx $ \c -> withForeignPtr pkey $ \k -> do
+                ok <- withCString "SHA256" $ \md -> c_EVP_DigestSignInit_ex c nullPtr md nullPtr nullPtr k ps
+                if ok /= 1
+                    then Left <$> openSslFailed
+                    else BSU.unsafeUseAsCStringLen (signedBytesRaw message) $ \(m, mlen) ->
+                        alloca $ \lenPtr -> do
+                            -- NULL output asks for the length; DER's is variable.
+                            okLen <- c_EVP_DigestSign c nullPtr lenPtr (castPtr m) (fromIntegral mlen)
+                            if okLen /= 1
+                                then Left <$> openSslFailed
+                                else do
+                                    maxLen <- peek lenPtr
+                                    der <- BSI.create (fromIntegral maxLen) $ \out -> do
+                                        okS <- c_EVP_DigestSign c out lenPtr (castPtr m) (fromIntegral mlen)
+                                        when (okS /= 1) $ error "EventChain.Crypto: EVP_DigestSign failed after sizing."
+                                    actual <- peek lenPtr
+                                    derToRaw (BS.take (fromIntegral actual) der)
+{-# NOINLINE sign #-}
+
+-- Verification ---------------------------------------------------------------
+
+{- | Verify a chunk of (key, message, signature) triples.
+
+Takes a chunk because ADR-0004 says the kernel API does, and here the chunk pays
+twice. The messages are prehashed through the batched SHA-256 kernel — a few
+hundred nanoseconds a line against 34 µs of curve math. And the verification
+context is built once per /run/ of the same key rather than once per line (see
+the module header): an AOF is mostly runs of one Producer's key, so what a line
+pays is the verify itself. A run is detected by point equality — t'PublicKey'
+compares on the claim it was promoted from — never by pointer identity, so a
+caller holding two loads of one key still pays for one context. The chunk is
+also a shape the caller can parallelise over: signature checks dominate
+wall-clock at scale, and one shared t'PublicKey' across a worker pool is
+measured at 7.8× on 8 threads.
+
+Fails wholesale on a malfunction rather than per entry. libcrypto failing to
+answer is not a fact about any one line, and reporting it as 'SigInvalid' would
+be a fail-quiet: the AOF would be pronounced forged because our library broke.
+-}
+verifyBatch :: [(PublicKey, SignedBytes, Sig)] -> Either CryptoError [SigCheck]
+verifyBatch [] = Right []
+verifyBatch triples = unsafePerformIO $ do
+    c_ERR_clear_error
+    let digests = digestChunk [signedBytesRaw m | (_, m, _) <- triples]
+    go Nothing [] (zip triples digests)
+  where
+    go _ acc [] = pure (Right (reverse acc))
+    go cache acc (((key@(PublicKey pkey _), _, signature), digest) : rest) = do
+        keyed <- case cache of
+            Just hit@(k, _) | k == key -> pure (Right hit)
+            _ -> fmap ((,) key) <$> verifyContext pkey
+        case keyed of
+            Left err -> pure (Left err)
+            Right hit@(_, pctx) ->
+                verifyOne pctx digest signature >>= \case
+                    Left err -> pure (Left err)
+                    Right answer -> go (Just hit) (answer : acc) rest
+{-# NOINLINE verifyBatch #-}
+
+{- | An initialized verification context for one key: the once-per-run cost.
+
+The key's refcount protects the borrow — @EVP_PKEY_CTX_new_from_pkey@ takes its
+own reference, so the context cannot outlive the key it watches.
+-}
+verifyContext :: ForeignPtr EVP_PKEY -> IO (Either CryptoError (ForeignPtr EVP_PKEY_CTX))
+verifyContext pkey = do
+    pctx <-
+        own
+            "EVP_PKEY_CTX_new_from_pkey"
+            (withForeignPtr pkey $ \k -> c_EVP_PKEY_CTX_new_from_pkey nullPtr k nullPtr)
+            p_EVP_PKEY_CTX_free
+    ok <- withForeignPtr pctx $ \c -> c_EVP_PKEY_verify_init_ex c nullPtr
+    if ok /= 1
+        then Left <$> openSslFailed
+        else pure (Right pctx)
+
+verifyOne :: ForeignPtr EVP_PKEY_CTX -> ByteString -> Sig -> IO (Either CryptoError SigCheck)
+verifyOne pctx digest signature =
+    withForeignPtr pctx $ \c ->
+        BSU.unsafeUseAsCStringLen (sigToDer signature) $ \(d, dlen) ->
+            BSU.unsafeUseAsCStringLen digest $ \(t, tlen) -> do
+                r <- c_EVP_PKEY_verify c (castPtr d) (fromIntegral dlen) (castPtr t) (fromIntegral tlen)
+                -- 1 valid, 0 invalid (malformed DER included), negative a malfunction.
+                case r of
+                    1 -> pure (Right SigValid)
+                    0 -> c_ERR_clear_error >> pure (Right SigInvalid)
+                    _ -> Left <$> openSslFailed
+
+-- Conversions ----------------------------------------------------------------
+
+{- | A t'Sig' as the DER @ECDSA-Sig-Value@ libcrypto demands.
+
+Encoded here, in Haskell, rather than through @ECDSA_SIG_set0@ and
+@i2d_ECDSA_SIG@: the grammar is @SEQUENCE { INTEGER r, INTEGER s }@ and nothing
+else, and the FFI construction it replaced — two bignums, an @ECDSA_SIG@, a
+finalizer, six calls — was most of verification's non-curve cost, per line.
+Total by construction: a t'Sig' is 64 bytes, so each INTEGER body is at most 33
+bytes and the SEQUENCE body at most 70, inside DER's short length form. The
+graded KATs cover it: the RFC 6979 vectors verify through this encoding.
+-}
+sigToDer :: Sig -> ByteString
+sigToDer signature =
+    BS.concat [BS.pack [0x30, fromIntegral (BS.length r + BS.length s)], r, s]
+  where
+    raw = sigRaw signature
+    r = derUnsigned (BS.take 32 raw)
+    s = derUnsigned (BS.drop 32 raw)
+
+{- | A 32-byte big-endian unsigned value as a DER INTEGER: stripped to the
+minimal encoding, a zero byte restored where the top bit would read as a sign,
+and zero itself a single zero byte.
+-}
+derUnsigned :: ByteString -> ByteString
+derUnsigned be = BS.concat [BS.pack [0x02, fromIntegral (BS.length body)], body]
+  where
+    stripped = BS.dropWhile (== 0x00) be
+    body
+        | BS.null stripped = BS.singleton 0x00
+        | BS.head stripped >= 0x80 = BS.cons 0x00 stripped
+        | otherwise = stripped
+
+{- | The DER libcrypto emits back to raw @r‖s@.
+
+@BN_bn2binpad@ into exactly 32 bytes is the range check: it returns -1 rather
+than truncating, so an @r@ or @s@ too large to be P-256's comes back as
+'SigOutOfRange' — a typed refusal, not a crash. libcrypto signing P-256 never
+emits one, but this function's contract is checked, not hoped for.
+-}
+derToRaw :: ByteString -> IO (Either CryptoError Sig)
+derToRaw der = mask_ $
+    BSU.unsafeUseAsCStringLen der $ \(d, dlen) ->
+        with (ConstBytes (castPtr d)) $ \pp -> do
+            sig <- c_d2i_ECDSA_SIG nullPtr pp (fromIntegral dlen)
+            if sig == nullPtr
+                then Left <$> openSslFailed
+                else do
+                    owned <- newForeignPtr p_ECDSA_SIG_free sig
+                    withForeignPtr owned $ \sp -> do
+                        r <- c_ECDSA_SIG_get0_r sp
+                        s <- c_ECDSA_SIG_get0_s sp
+                        -- A zero length signals out-of-range; the shape check
+                        -- below turns it into the typed error.
+                        raw <- BSI.createUptoN rawSigLength $ \out -> do
+                            okR <- c_BN_bn2binpad r out 32
+                            okS <- c_BN_bn2binpad s (out `plusPtr` 32) 32
+                            pure (if okR < 0 || okS < 0 then 0 else rawSigLength)
+                        pure $ case sigFromRaw raw of
+                            Right ok -> Right ok
+                            Left _ -> Left SigOutOfRange
+
+-- Plumbing -------------------------------------------------------------------
+
+-- | @generator * scalar@, encoded compressed. The point libcrypto will not derive.
+derivePoint :: Ptr BIGNUM -> IO (Either CryptoError ByteString)
+derivePoint bn = do
+    group <- own "EC_GROUP_new_by_curve_name" (c_EC_GROUP_new_by_curve_name nidP256) p_EC_GROUP_free
+    withForeignPtr group $ \g -> do
+        point <- own "EC_POINT_new" (c_EC_POINT_new g) p_EC_POINT_free
+        withForeignPtr point $ \pt -> do
+            ok <- c_EC_POINT_mul g pt bn nullPtr nullPtr nullPtr
+            if ok /= 1
+                then Left <$> openSslFailed
+                else do
+                    len <- c_EC_POINT_point2oct g pt pointConversionCompressed nullPtr 0 nullPtr
+                    if len == 0
+                        then Left <$> openSslFailed
+                        else do
+                            out <- BSI.create (fromIntegral len) $ \buf -> do
+                                n <- c_EC_POINT_point2oct g pt pointConversionCompressed buf len nullPtr
+                                when (n == 0) $ error "EventChain.Crypto: EC_POINT_point2oct failed after sizing."
+                            pure (Right out)
+
+-- | Build an @OSSL_PARAM@ array, or 'Nothing' if any push failed.
+buildParams :: (Ptr OSSL_PARAM_BLD -> IO Bool) -> IO (Maybe (ForeignPtr OSSL_PARAM))
+buildParams push = do
+    bld <- own "OSSL_PARAM_BLD_new" c_OSSL_PARAM_BLD_new p_OSSL_PARAM_BLD_free
+    withForeignPtr bld $ \b -> do
+        ok <- push b
+        if not ok
+            then pure Nothing
+            else do
+                params <- c_OSSL_PARAM_BLD_to_param b
+                if params == nullPtr
+                    then pure Nothing
+                    else Just <$> newForeignPtr p_OSSL_PARAM_free params
+
+-- | @EVP_PKEY_fromdata@ against a fresh EC context.
+fromdata :: CInt -> ForeignPtr OSSL_PARAM -> IO (Maybe (ForeignPtr EVP_PKEY))
+fromdata selection params = do
+    ctx <- own "EVP_PKEY_CTX_new_from_name" (withCString "EC" $ \n -> c_EVP_PKEY_CTX_new_from_name nullPtr n nullPtr) p_EVP_PKEY_CTX_free
+    withForeignPtr ctx $ \c -> withForeignPtr params $ \ps -> do
+        okInit <- c_EVP_PKEY_fromdata_init c
+        if okInit /= 1
+            then pure Nothing
+            else alloca $ \out -> do
+                poke out nullPtr
+                ok <- c_EVP_PKEY_fromdata c out selection ps
+                k <- peek out
+                if ok /= 1 || k == nullPtr
+                    then pure Nothing
+                    else Just <$> newForeignPtr p_EVP_PKEY_free k
+
+-- | A digest context of our own. Mutable, so never shared.
+newMdCtx :: IO (ForeignPtr EVP_MD_CTX)
+newMdCtx = own "EVP_MD_CTX_new" c_EVP_MD_CTX_new p_EVP_MD_CTX_free
+
+{- | Allocate a C object and hand its release to the garbage collector.
+
+'mask_' spans the allocation and the finalizer being attached: an abort in that
+window would strand a pointer nothing would ever free.
+-}
+own :: String -> IO (Ptr a) -> FinalizerPtr a -> IO (ForeignPtr a)
+own what new free = mask_ $ do
+    p <- new
+    when (p == nullPtr) $ error ("EventChain.Crypto: " <> what <> " returned NULL (out of memory).")
+    newForeignPtr free p
+
+-- | A scalar as a bignum, released when the action returns.
+withBignum :: ByteString -> (Ptr BIGNUM -> IO a) -> IO a
+withBignum bs act = do
+    bn <- own "BN_bin2bn" (bin2bn bs) p_BN_free
+    withForeignPtr bn act
+
+bin2bn :: ByteString -> IO (Ptr BIGNUM)
+bin2bn bs = BSU.unsafeUseAsCStringLen bs $ \(p, n) -> c_BN_bin2bn (castPtr p) (fromIntegral n) nullPtr
+
+-- | An @OSSL_PARAM@ name. All of them are ASCII literals from OpenSSL's headers.
+withNamed :: String -> (CString -> IO a) -> IO a
+withNamed = withCString
+
+-- | Drain the error queue into a 'CryptoError'.
+openSslFailed :: IO CryptoError
+openSslFailed = OpenSslFailed . fromIntegral <$> c_ERR_get_error

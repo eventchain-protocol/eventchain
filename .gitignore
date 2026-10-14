@@ -1,0 +1,32 @@
+# Build products
+dist-newstyle/
+dist/
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.prof
+*.hp
+*.eventlog
+*.tix
+.hie/
+.ghc.environment.*
+cabal.project.local*
+.cabal-sandbox/
+cabal.sandbox.config
+.stack-work/
+
+# Editors and the OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Agent session files and one-off notes: never part of the repository
+.claude/
+CLAUDE.md
+/how-to-write-readme.md
+docs/handoff*.md
+thoughts/
+*.local.md

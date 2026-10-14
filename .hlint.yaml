@@ -1,0 +1,13 @@
+# hlint does not read `default-extensions` out of the .cabal files, so it must be
+# told what the packages already declare. Without `OverloadedRecordDot` it parses
+# `unit.pkgName` as the composition `unit . pkgName` and reports a redundant
+# `id` — a wrong answer about correct code, on any file that uses record dots.
+#
+# Keep this list in step with the `default-extensions` stanza the packages share.
+- arguments:
+    - -XGHC2024
+    - -XStrictData
+    - -XDerivingVia
+    - -XPatternSynonyms
+    - -XNoFieldSelectors
+    - -XOverloadedRecordDot

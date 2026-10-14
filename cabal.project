@@ -1,0 +1,54 @@
+-- Three packages, one project (ADR-0005). The Producer and the Verifier share
+-- no format logic: `eventchain-verify` must never build-depend on
+-- `eventchain`, because a Verifier that imports the Producer's canonicalizer
+-- attests self-consistency rather than conformance. That edge's absence is
+-- what makes the golden vectors evidence, so `cabal test all` asserts it
+-- (gates:verifier-independence) rather than trusting this comment.
+--
+-- Crypto goes the other way: `eventchain-crypto` is shared by both, because
+-- there agreement is the requirement rather than the question, and a
+-- known-answer test against OpenSSL gates it without needing a dissenter.
+--
+-- `gates` is not a fourth part of the system; it is the part that grades the
+-- other three. It ships nothing and nothing depends on it. Its test suites are
+-- what make the paragraph above true rather than aspirational, so they run
+-- whenever the tests do.
+-- `eventchain-bench` is the other package that is not part of the system: it
+-- measures the Verifier end to end, which needs the Producer to write the file
+-- and the Verifier to read it, and so can live on neither side of the wall.
+-- Like `gates`, it ships nothing and nothing depends on it.
+packages:
+    eventchain-crypto
+    eventchain
+    eventchain-verify
+    gates
+    eventchain-bench
+
+-- Without this, `cabal test all` runs the two gates and silently skips `kat` and
+-- `conformance` -- the suites that grade the code. This flag is what the solver
+-- reads; naming a test suite on the command line is not, so test-only
+-- dependencies (hedgehog, tasty, process, temporary) never enter the install
+-- plan and cabal reports the suite "not available" and moves on, exit code 0.
+-- The gates escaped that only because aeson already arrives via
+-- `eventchain-verify`'s library, which is luck rather than design.
+--
+-- So the paragraph at the top of this file was true of the gates and false of
+-- everything else: M1's known answers and M2's OpenSSL gate had only ever run
+-- by hand, and a fresh clone running `cabal test all` saw two structural checks
+-- and no behaviour.
+tests: True
+
+-- The mint oracle (ADR-0007) is the one place tweag `webauthn` — and, through
+-- it, crypton — enters a build, and only a test build: eventchain's
+-- mint-oracle suite. Its 0.11.0.0 release caps base <4.20, predating this
+-- project's GHC; the relaxations are scoped to that package (plus jose's own
+-- base cap), and its neighbours are held inside the release's own windows:
+-- newer crypton-x509s switched to the crypton-asn1 fork while webauthn 0.11
+-- still imports the legacy asn1-types, and jose 0.12 changed the JWT API out
+-- from under it — either mix is a type error in its build, not ours.
+allow-newer: webauthn:*, jose:base, jose:template-haskell
+constraints:
+    crypton-x509 <1.8
+    , crypton-x509-store <1.7
+    , crypton-x509-validation <1.7
+    , jose <0.12

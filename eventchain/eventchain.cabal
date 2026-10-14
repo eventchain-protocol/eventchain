@@ -1,0 +1,206 @@
+cabal-version:      3.14
+name:               eventchain
+version:            0.1.0.0
+synopsis:
+    Zero-trust provenance: produce hash-chained append-only event files
+description:
+    The Producer for the EventChain protocol: an append-only JSON-Lines file
+    (the AOF) of hash-chained, identity-signed Entries that any holder can
+    verify offline. This package writes those lines — a ChainedEvent in, a
+    signed AOF line out.
+
+    It does not verify them. Verification is @eventchain-verify@, a separate
+    package that shares no format logic with this one (ADR-0005): a Verifier
+    importing the Producer's canonicalizer would attest self-consistency
+    rather than conformance, so the two sides derive the wire format
+    independently and their agreement is what the golden vectors are evidence
+    of.
+
+    __It never parses JSON.__ It emits JSON. There is no JSON parser here and
+    no JSON-accepting attack surface, and that absence is a security property
+    rather than an oversight.
+
+    Protocol specification: <https://eventchain-protocol.github.io/>
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             EventChain contributors
+maintainer:         raam@cornerstone.red
+category:           Cryptography
+build-type:         Simple
+-- Only what is built; see eventchain-crypto.cabal for why this narrowed.
+tested-with:        GHC ==9.12.4
+
+-- The public surface. `EventChain` is the front door; `EntryObject` and
+-- `Canonical` sit beside it because callers need them at the signing edge.
+-- The domain vocabulary that used to live here has left: the decision-free
+-- types are `eventchain-crypto`'s, and the claim tier -- Entry, Attestation,
+-- ChainPosition -- is the Verifier's, because a claim is what reading someone
+-- else's bytes produces and this package never reads any.
+library
+    hs-source-dirs:     src
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+    exposed-modules:
+        EventChain
+        EventChain.Canonical
+        EventChain.ChainedEvent
+        EventChain.EntryObject
+        EventChain.Produce
+        EventChain.Wire
+
+    -- JSON syntax, shared by `Canonical` (the signing message) and `Wire` (the
+    -- line). ADR-0005's no-shared-format-logic rule runs across packages, where
+    -- two encoders that agree are evidence; inside one package a second copy of
+    -- this escaper would be graded by nothing and could let a line say what the
+    -- signed bytes do not.
+    other-modules:
+        EventChain.Internal.Json
+
+    -- No JSON parser, and no `aeson`. The Producer emits JSON and never reads
+    -- it, so the absence is the point rather than an omission to correct.
+    --
+    -- `base64` is here as an encoder and nothing more. docs/plan.md picks it for
+    -- being typed and rejecting non-canonical input, which is a property of its
+    -- *decoders* -- the Verifier's concern. This package only encodes, where
+    -- there is no invalid input to reject, so that justification buys nothing
+    -- here and the plain fact that base64url is not worth hand-rolling buys it
+    -- all. Both packages depending on it is not an ADR-0005 problem: the rule is
+    -- about *our* format logic -- member vocabulary, JCS, the codec, the Entry
+    -- model -- not about third-party encoders, the same way both sides share
+    -- bytestring and libcrypto.
+    build-depends:
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , containers        >=0.7  && <0.9
+        , eventchain-crypto >=0.1  && <0.2
+        , text              >=2.1  && <2.3
+
+test-suite conformance
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Main.hs
+    default-language:   GHC2024
+
+    -- Kept identical to the library's list on purpose: `StrictData` in
+    -- particular changes evaluation, so a test suite built without it would be
+    -- exercising different code from the one that ships.
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Canonical
+        Test.EventChain.EntryObject
+        Test.EventChain.Fixtures
+        Test.EventChain.Mint
+        Test.EventChain.Produce
+        Test.EventChain.Vectors
+        Test.EventChain.Wire
+
+    -- aeson is the JCS oracle, not a dependency of the library. The
+    -- canonicalizer is hand-written per docs/plan.md ("JCS is hand-written";
+    -- string-only members make it small), so an independently written
+    -- implementation is what makes the conformance gate evidence rather than
+    -- a restatement of our own code. The library may never import
+    -- `Data.Aeson.RFC8785`; the grader is not the graded, and
+    -- `gates:no-jcs-oracle-import` asserts it.
+    --
+    -- aeson earns a second job at M2: it is also the *parser* no Producer test
+    -- could otherwise have. "our decoder reads our encoder" is the tautology
+    -- this package is built to avoid, and there is no decoder here to write it
+    -- with, so a reader that has never seen the format is the only way to ask
+    -- whether a line says what we meant.
+    --
+    -- `process` and `temporary` are the OpenSSL CLI's: the M2 gate shells out
+    -- to it to judge every line's signature, over a message the oracle derived.
+    -- It needs files on disk for the key, the message and the signature.
+    -- `base64` decodes what the library encoded, from the untyped door -- the
+    -- text on a line is a claim, not a wrapper.
+    build-depends:
+        , aeson           >=2.3  && <2.4
+        , base            >=4.20 && <5
+        , base64          >=1.0  && <1.1
+        , bytestring      >=0.12 && <0.14
+        , containers      >=0.7  && <0.9
+        , directory       >=1.3  && <1.4
+        , eventchain
+        , eventchain-crypto
+        , filepath        >=1.5  && <1.6
+        , hedgehog        >=1.5  && <1.8
+        , process         >=1.6  && <1.7
+        , tasty           >=1.5  && <1.6
+        , tasty-hedgehog  >=1.4  && <1.5
+        , tasty-hunit     >=0.10 && <0.11
+        , temporary       >=1.3  && <1.4
+        , text            >=2.1  && <2.3
+
+-- ADR-0007's grader, and the one build tweag `webauthn` — with crypton behind
+-- it — may enter, which is why it is its own suite rather than more of
+-- `conformance`: the fabrications cross unchanged (the fabricator modules are
+-- shared source, not a library), and every envelope faces an implementation
+-- of §7.2 that shares none of ours. cborg and serialise are here to CBOR a
+-- COSE_Key the oracle's stored-credential model demands; `cabal.project`
+-- carries the bounds relaxations its 0.11 release needs on this GHC.
+test-suite mint-oracle
+    type:               exitcode-stdio-1.0
+    hs-source-dirs:     tests
+    main-is:            Oracle.hs
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded
+
+    other-modules:
+        Test.EventChain.Fixtures
+        Test.EventChain.Mint
+        Test.EventChain.Vectors
+
+    build-depends:
+        , aeson             >=2.3  && <2.4
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , cborg             >=0.2  && <0.3
+        , containers        >=0.7  && <0.9
+        , crypton
+        , directory         >=1.3  && <1.4
+        , eventchain
+        , eventchain-crypto
+        , filepath          >=1.5  && <1.6
+        , hedgehog          >=1.5  && <1.8
+        , serialise         >=0.2  && <0.3
+        , tasty             >=1.5  && <1.6
+        , tasty-hunit       >=0.10 && <0.11
+        , text              >=2.1  && <2.3
+        , validation        >=1.1  && <1.3
+        , webauthn          >=0.11 && <0.12

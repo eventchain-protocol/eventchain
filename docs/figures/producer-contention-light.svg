@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="356" viewBox="0 0 720 356" role="img">
+<rect width="720" height="356" fill="#fcfcfb"/>
+<text x="24.0" y="30.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="15" fill="#0b0b0b" text-anchor="start" font-weight="600" >Signatures per committed Entry, Producers racing for one head</text>
+<text x="24.0" y="48.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#52514e" text-anchor="start" font-weight="normal" >Saturating load, one key and one core per Producer · commits/s stay at one per window whatever the count</text>
+<rect x="24" y="53" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="40.0" y="62.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" >20 ms in flight</text>
+<rect x="150" y="53" width="10" height="10" rx="2" fill="#eb6834"/>
+<text x="166.0" y="62.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" >2 ms in flight</text>
+<rect x="270" y="53" width="10" height="10" rx="2" fill="#1baf7a"/>
+<text x="286.0" y="62.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" >no delay</text>
+<line x1="354" y1="58" x2="372" y2="58" stroke="#898781" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="378.0" y="62.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" >One per Producer</text>
+<line x1="64" y1="292.0" x2="550" y2="292.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="54.0" y="296.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">0</text>
+<line x1="64" y1="222.7" x2="550" y2="222.7" stroke="#e1e0d9" stroke-width="1"/>
+<text x="54.0" y="226.7" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">4</text>
+<line x1="64" y1="153.3" x2="550" y2="153.3" stroke="#e1e0d9" stroke-width="1"/>
+<text x="54.0" y="157.3" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">8</text>
+<line x1="64" y1="84.0" x2="550" y2="84.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="54.0" y="88.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">12</text>
+<text x="64.0" y="310.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">1</text>
+<text x="108.2" y="310.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">2</text>
+<text x="196.5" y="310.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">4</text>
+<text x="373.3" y="310.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">8</text>
+<text x="550.0" y="310.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">12</text>
+<text x="307.0" y="328.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" >Producers</text>
+<line x1="64" y1="292" x2="550" y2="292" stroke="#c3c2b7" stroke-width="1"/>
+<line x1="64.0" y1="274.7" x2="550.0" y2="84.0" stroke="#898781" stroke-width="2" stroke-dasharray="4 3"/>
+<polyline points="64.0,274.5 108.2,257.2 196.5,222.3 373.3,152.5 550.0,84.9" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="64.0" cy="274.5" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="108.2" cy="257.2" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="196.5" cy="222.3" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="373.3" cy="152.5" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="550.0" cy="84.9" r="5" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<polyline points="64.0,274.7 108.2,257.3 196.5,222.7 373.3,153.7 550.0,84.9" fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="64.0" cy="274.7" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="108.2" cy="257.3" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="196.5" cy="222.7" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="373.3" cy="153.7" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="550.0" cy="84.9" r="5" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<polyline points="64.0,274.7 108.2,257.5 196.5,223.2 373.3,157.3 550.0,102.9" fill="none" stroke="#1baf7a" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="64.0" cy="274.7" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="108.2" cy="257.5" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="196.5" cy="223.2" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="373.3" cy="157.3" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="550.0" cy="102.9" r="5" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<text x="562.0" y="89.7" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">11.9 · 20 ms and 2 ms in flight</text>
+<text x="562.0" y="107.1" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">10.9 · no delay</text>
+<text x="24.0" y="346.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >Hub modelled as compare-and-swap append; every file verified. docs/research/2026-10-producer-contention.md.</text>
+</svg>
