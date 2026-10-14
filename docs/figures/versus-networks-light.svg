@@ -17,8 +17,8 @@
 <line x1="680.0" y1="64" x2="680.0" y2="342" stroke="#e1e0d9" stroke-width="1"/>
 <text x="680.0" y="358.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">1M</text>
 <text x="228.0" y="91.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#0b0b0b" text-anchor="end" font-weight="600" >EventChain Verifier · 12 cores</text>
-<circle cx="613.9" cy="87.0" r="6" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
-<text x="601.9" y="91.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#0b0b0b" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">125,500 entries/s</text>
+<circle cx="640.9" cy="87.0" r="6" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<text x="628.9" y="91.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#0b0b0b" text-anchor="end" font-weight="normal" font-variant-numeric="tabular-nums">293,100 entries/s</text>
 <text x="228.0" y="121.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#52514e" text-anchor="end" font-weight="normal" >Hyperledger Fabric (lab)</text>
 <line x1="495.0" y1="117.0" x2="555.4" y2="117.0" stroke="#898781" stroke-width="2" stroke-linecap="round"/>
 <circle cx="555.4" cy="117.0" r="6" fill="#898781" stroke="#fcfcfb" stroke-width="2"/>

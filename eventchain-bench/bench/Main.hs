@@ -12,12 +12,13 @@ is the ceiling once signatures are spread across cores:
   signature is checked over. Everything the fold does to a line that is not
   crypto, run sequentially.
 * /signatures/ — the signature kernel alone over this file's own keys,
-  messages and signatures, one chunk after another: what one thread of
-  libcrypto costs on these lines, measured in the same process and minutes
-  as the row below it.
+  messages and signatures, one chunk after another: what one thread of the
+  fixed-base kernel costs on these lines, measured in the same process and
+  minutes as the row below it. The key's table is built once, before the
+  clock, as the fold builds it once per chunk.
 * /verify/ — the whole fold, every verdict forced, on as many capabilities as
   the RTS was given. Capabilities are not cores: the signature check is a
-  @safe@ foreign call, so even @-N1@ overlaps libcrypto with the next chunk's
+  @safe@ foreign call, so even @-N1@ overlaps the kernel with the next chunk's
   work. The two rows above are the sequential references; this one is never
   sequential.
 
@@ -35,7 +36,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as T
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import EventChain (ChainedEvent (..), EventKind (..), ProducedLine (..), entryId, genesisHash, payloadRef, produce)
-import EventChain.Crypto (PrivateKey, PublicKey, SigCheck, privateKey, privateKeyPublic, publicKey, verifyBatch)
+import EventChain.Crypto (PrecomputedKey, PrivateKey, SigCheck, precomputeKey, privateKey, privateKeyPublic, publicKey, verifyBatchPrecomputed)
 import EventChain.Crypto.Types (LineHash, Sig, SignedBytes, lineBytesRaw, payloadHashFromBytes)
 import EventChain.Verify (Verdict (..), verify)
 import EventChain.Verify.Canonical (canonicalBytesRaw, canonicalize, signingMessage)
@@ -140,7 +141,7 @@ decodedCanonical file = case frameFile file of
         ]
 
 -- | Every line's signature check, as the fold would hand it to the seam.
-signatureTriples :: LBS.ByteString -> [(PublicKey, SignedBytes, Sig)]
+signatureTriples :: LBS.ByteString -> [(PrecomputedKey, SignedBytes, Sig)]
 signatureTriples file = case frameFile file of
     Left err -> error ("framing refused the bench's own file: " <> show err)
     Right lns ->
@@ -150,18 +151,17 @@ signatureTriples file = case frameFile file of
         , let proof = (decodedEntry d).producedProof
         ]
   where
-    -- One promotion, as the fold's per-chunk map arranges for a one-key file.
+    -- One promotion and one table, as the fold's per-chunk map arranges for
+    -- a one-key file.
     key claim
         | claim == privateKeyPublic producerKey = promoted
         | otherwise = error "the bench's own file carries a key it did not sign with"
     promoted = case publicKey (privateKeyPublic producerKey) of
-        Right k -> k
+        Right k -> precomputeKey k
         Left err -> error ("the producer's own key is off the curve: " <> show err)
 
-batch :: [(PublicKey, SignedBytes, Sig)] -> [SigCheck]
-batch triples = case verifyBatch triples of
-    Right checks -> checks
-    Left err -> error ("libcrypto did not answer: " <> show err)
+batch :: [(PrecomputedKey, SignedBytes, Sig)] -> [SigCheck]
+batch = verifyBatchPrecomputed
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []

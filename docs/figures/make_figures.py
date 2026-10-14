@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Render the README's performance figures as SVG, light and dark.
 
-Numbers are the ones recorded in docs/research/2026-10-verifier-throughput.md,
+Numbers are the ones recorded in docs/research/2026-10-fixed-base-verify.md,
+docs/research/2026-10-verifier-throughput.md,
 docs/research/2026-10-producer-contention.md and the sources cited in the
 README's performance section; change them there first, then here. No plotting library: the figures are a few rectangles and
 circles, and a dependency would be the heavier thing to maintain.
@@ -62,13 +63,13 @@ def rounded_end_bar(x, y, w, h, fill, r=4):
 
 # Figure 1: entries verified per second, by configuration ----------------------
 
-# Rows from the second run of the day (docs/research/2026-10-verifier-throughput.md), worst of two. The first row is the sequential
+# Rows from docs/research/2026-10-fixed-base-verify.md, worst of two. The first row is the sequential
 # reference: the signature kernel alone on one thread, no sparks.
 FIG1 = [
-    ("Signature kernel alone, 1 thread", 15_700),
-    ("Fan-out, 1 capability", 33_500),
-    ("Fan-out, 12 capabilities", 125_500),
-    ("Fan-out, 16 capabilities", 118_600),
+    ("Signature kernel alone, 1 thread", 44_400),
+    ("Fan-out, 1 capability", 73_300),
+    ("Fan-out, 12 capabilities", 293_100),
+    ("Fan-out, 16 capabilities", 294_600),
 ]
 
 
@@ -109,7 +110,7 @@ def figure1(t):
 
 # Figure 2: where one line's time goes, sequentially --------------------------
 
-FIG2 = [("Decode", 10.6, "s1"), ("Signature check", 53.0, "s2"), ("Fold", 1.0, "s3")]
+FIG2 = [("Decode", 6.9, "s1"), ("Signature check", 15.6, "s2"), ("Fold", 1.0, "s3")]
 
 
 def figure2(t):
@@ -150,7 +151,7 @@ def figure2(t):
 # max over 100 blocks, read 2026-10-13. Fabric: FastFabric paper, baseline and
 # re-architected lab peak. EventChain: this repository's bench, -N12.
 FIG3 = [
-    ("EventChain Verifier · 12 cores", 125_500, None),
+    ("EventChain Verifier · 12 cores", 293_100, None),
     ("Hyperledger Fabric (lab)", 3_000, 20_000),
     ("Solana", 2_000, 11_000),
     ("BNB Chain", 213, 3_300),

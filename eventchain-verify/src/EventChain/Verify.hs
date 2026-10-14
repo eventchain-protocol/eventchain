@@ -30,9 +30,19 @@ decoding and signature checks are independent work. The fold fans chunks out
 across however many capabilities the RTS was given, through a bounded buffer
 that keeps a large file's memory at a few chunks. One capability is not one
 core here: the signature check is a @safe@ foreign call that releases its
-capability for the ~50 µs it runs, and the runtime spends that time on the
-next chunk's spark, so even @-N1@ overlaps libcrypto with the work around it
-(measured: @docs/research/2026-10-verifier-throughput.md@).
+capability for the microseconds it runs, and the runtime spends that time on
+the next chunk's spark, so even @-N1@ overlaps the kernel with the work around
+it (measured: @docs/research/2026-10-verifier-throughput.md@).
+
+/Attribution runs on a precomputed key./ A chunk promotes each distinct key
+once and builds the table of its multiples with it (ADR-0004 as amended), so
+each signature is two fixed-base table walks rather than a general scalar
+multiplication. The table is a function of a key already proven on the curve;
+it adds no fact. A run of one key across chunks builds it once: the spine
+hands each chunk the promotion of the key its predecessor's last line signed
+with, read from that one line, and a chunk whose lines carry that key shares
+the thunk rather than making its own. Mint assertions stay on libcrypto's
+verify: they are rare, and their attester keys are not runs.
 -}
 module EventChain.Verify
     ( -- * What the fold establishes
@@ -66,7 +76,7 @@ import Data.Map.Lazy (Map)
 import Data.Map.Lazy qualified as Map
 import Data.Text (Text)
 import Data.Word (Word64)
-import EventChain.Crypto (CryptoError (..), PublicKey, SigCheck (..), hashClientData, hashLines, publicKey, verifyBatch)
+import EventChain.Crypto (CryptoError (..), PrecomputedKey, SigCheck (..), hashClientData, hashLines, precomputeKey, publicKey, verifyBatch, verifyBatchPrecomputed)
 import EventChain.Crypto.Types (ClaimedKey, LineHash, Sig, SignedBytes, lineBytes, lineHashFromBytes, sha256Length)
 import EventChain.Verify.Canonical (canonicalize, signingMessage)
 import EventChain.Verify.EntryObject (EntryObject (..), MintMembers (..))
@@ -301,13 +311,22 @@ verifyFrom c = fold c.lastHash . frameLines (chainPosition (checkpointIndex c + 
 
 {- | Fold the lines in chunks, each chunk's work independent of the rest.
 
-The chain hands each chunk exactly one thing from before it: the digest of the
-line it follows. That digest is a function of raw bytes, so 'boundary' computes
-it from the previous chunk's last line without waiting for that chunk to be
-decoded or judged — and with it in hand, a chunk's decoding, hashing and
-signature checks depend on nothing outside the chunk. The chunks are fanned
-out through a bounded spark buffer; forcing each verdict to constructor forces
-every check behind it, which is why no deep evaluation is needed.
+The chain hands each chunk exactly one thing from before it that a verdict
+depends on: the digest of the line it follows. That digest is a function of
+raw bytes, so 'boundary' computes it from the previous chunk's last line
+without waiting for that chunk to be decoded or judged — and with it in hand,
+a chunk's decoding, hashing and signature checks depend on nothing outside
+the chunk. The chunks are fanned out through a bounded spark buffer; forcing
+each verdict to constructor forces every check behind it, which is why no
+deep evaluation is needed.
+
+One more thing travels the same way, and no verdict depends on it: the
+promotion of the key the previous chunk's last line signed with (@seed@),
+decoded from that one line on the spine. A chunk whose lines carry that key
+uses the shared thunk, so a run of one Producer's key across the file builds
+its table once rather than once per chunk; a chunk under some other key
+promotes its own as before. The seed is at most one key, so the spine holds
+one table, not one per key the file ever named.
 
 Carried as a t'LineHash' computed from the line that was actually read, which is
 the whole of ADR-0002 §1 — the alternative, recomputing it from the parsed view,
@@ -319,19 +338,42 @@ going to be refused anyway — and its verdicts are never emitted, so what the
 caller sees is what the sequential fold would have said.
 -}
 fold :: LineHash -> [(ChainPosition, ByteString)] -> [Verdict]
-fold prev lns = untilHalt (map (uncurry chunkVerdicts) staged `using` parBuffer inFlight (evalTuple2 (evalList rseq) rseq))
+fold prev lns = untilHalt (map (\(p, s, c) -> chunkVerdicts p s c) staged `using` parBuffer inFlight (evalTuple2 (evalList rseq) rseq))
   where
     chunks = chunksOf chunkSize lns
 
-    -- Each chunk paired with the digest it follows. A chunk whose last line is
-    -- not well-formed has no boundary, and the chunk after it is not staged:
-    -- that chunk halts, so nothing after it would be read.
-    staged = zip (prev : untilNothing (map boundary chunks)) chunks
+    -- Each chunk paired with the digest it follows and the seed it inherits.
+    -- A chunk whose last line is not well-formed has no boundary, and the
+    -- chunk after it is not staged: that chunk halts, so nothing after it
+    -- would be read.
+    staged = zip3 (prev : untilNothing (map boundary chunks)) seeds chunks
 
     untilNothing = foldr (\m acc -> maybe [] (: acc) m) []
 
+    -- The seed a chunk inherits: its predecessor's last key, promoted once.
+    -- Kept when it is the key already seeded, so a run shares one thunk;
+    -- replaced otherwise, so the spine never holds more than one table.
+    seeds = scanl seed Map.empty (map lastKey chunks)
+    seed inherited = \case
+        Just c
+            | Map.member c inherited -> inherited
+            | otherwise -> Map.singleton c (precomputeKey <$> publicKey c)
+        Nothing -> Map.empty
+
     untilHalt [] = []
     untilHalt ((verdicts, halt) : rest) = verdicts <> maybe (untilHalt rest) (const []) halt
+
+{- | The key the chunk after this one is likely to see: its last line's, read
+by decoding that one line on the spine — ~7 µs per chunk against a ~520 µs
+table build saved per chunk of a run. 'Nothing' for a line that is not an
+Entry, and then the chunk after it is not staged anyway.
+-}
+lastKey :: [(ChainPosition, ByteString)] -> Maybe ClaimedKey
+lastKey chunk = case decodeLine pos raw of
+    Right d -> Just (decodedEntry d).producedProof.publicKey
+    Left _ -> Nothing
+  where
+    (pos, raw) = last chunk
 
 {- | The digest the chunk after this one must chain to: its last line's,
 computed from the raw bytes — the same bytes 'chunkVerdicts' hashes, and so
@@ -350,19 +392,18 @@ boundary chunk = case lineBytes (snd (last chunk)) of
 {- | One chunk: decode every line, hash them all in one call, judge the
 Produced Proofs in one crossing and the Mint assertions in another.
 
-Two crossings rather than one interleaved batch, and the split is the
-batching working instead of failing: 'EventChain.Crypto.verifyBatch' reuses
-its verification context only while consecutive triples carry equal keys, an
-AOF is mostly runs of one Producer's key, and splicing each Mint's attester
-key into the middle of a run would break the run to save a call that costs
-less than the reuse it destroys.
+Two crossings rather than one interleaved batch, because they are two
+kernels: Produced Proofs go through the precomputed key's fixed-base verify,
+Mint assertions through libcrypto's. An AOF is mostly runs of one Producer's
+key, which is what a table per key pays for; an attester key signs once per
+Mint and would pay the table for one walk.
 
 Returns the verdicts and, if the chunk halted on a malformed line, the error
 it halted on — already the chunk's last verdict, returned beside the list so
 the fold can stop without scanning for it.
 -}
-chunkVerdicts :: LineHash -> [(ChainPosition, ByteString)] -> ([Verdict], Maybe DecodeError)
-chunkVerdicts prev lns =
+chunkVerdicts :: LineHash -> Promoted -> [(ChainPosition, ByteString)] -> ([Verdict], Maybe DecodeError)
+chunkVerdicts prev inherited lns =
     ( zipWith5 judge decoded hashes links attributions envelopes <> foldMap (pure . Malformed) halt
     , halt
     )
@@ -372,7 +413,7 @@ chunkVerdicts prev lns =
     entries = map snd decoded
     hashes = hashLines (map decodedLine entries)
     links = chainFaults prev (zip entries hashes)
-    attributions = attributionResults entries
+    attributions = attributionResults inherited entries
     envelopes = envelopeResults entries
 
     -- Verdict precedence, uniform across every check the fold runs: a decided
@@ -425,50 +466,58 @@ chainFaults expectedPrev ((d, h) : more) = fault : chainFaults h more
 key's — the whole chunk in one crossing.
 
 A key naming no point on P-256 is a fault about the line. libcrypto failing to
-answer is not, and the two arrive as different constructors of t'CryptoError'
-precisely so this function does not have to guess which it is looking at. A
-malfunction takes down the whole chunk's verdicts rather than one line's,
-because it is not evidence about any line.
+answer the promotion is not, and the two arrive as different constructors of
+t'CryptoError' precisely so this function does not have to guess which it is
+looking at. A malfunction takes down the whole chunk's verdicts rather than
+one line's, because it is not evidence about any line. The verify itself
+cannot malfunction — 'EventChain.Crypto.verifyBatchPrecomputed' answers in a
+plain list — so the only 'Left' here is the promotion's.
 -}
-attributionResults :: [DecodedEntry] -> [Either CryptoError [Fault]]
-attributionResults decoded = case traverse (prepare promoted) decoded of
+attributionResults :: Promoted -> [DecodedEntry] -> [Either CryptoError [Fault]]
+attributionResults inherited decoded = case traverse (prepare promoted) decoded of
     Left err -> map (const (Left err)) decoded
-    Right prepared -> case verifyBatch [t | Checkable t <- prepared] of
-        Left err -> map (const (Left err)) decoded
-        Right checks -> stitch [KeyOffCurve] answered prepared checks
+    Right prepared -> stitch [KeyOffCurve] answered prepared (verifyBatchPrecomputed [t | Checkable t <- prepared])
   where
     answered SigValid = []
     answered SigInvalid = [SignatureInvalid]
 
-    -- One promotion per distinct key in the chunk, never one per line.
-    -- Promoting is a ~15 µs EVP_PKEY load against a ~34 µs verify, an AOF is
-    -- mostly runs of one Producer's key, and 'verifyBatch' reuses its
-    -- verification context only while consecutive triples carry equal keys —
-    -- so the lines of a run must share one t'PublicKey', or every line pays
-    -- the load and the reuse never happens. The map is value-lazy on purpose:
-    -- each distinct key is one thunk, loaded the first time a line needs it.
-    promoted = Map.fromList [(c, publicKey c) | d <- decoded, let c = claimOf d]
+    -- One promotion and one table per distinct key in the chunk, never one
+    -- per line — and none at all for the key the chunk inherited, whose
+    -- thunk is the previous chunk's. Promoting is a ~15 µs EVP_PKEY load and
+    -- the table ~520 µs of curve arithmetic, against a ~15 µs verify; an AOF
+    -- is mostly runs of one Producer's key, so a run pays for one table where
+    -- a chunk on its own would pay ~2 µs a line. The map is value-lazy on
+    -- purpose: each distinct key is one thunk, loaded and tabulated the first
+    -- time a line needs it.
+    promoted = Map.fromList [(c, Map.findWithDefault (precomputeKey <$> publicKey c) c inherited) | d <- decoded, let c = claimOf d]
     claimOf d = (decodedEntry d).producedProof.publicKey
+
+-- | Promotions by claim: the chunk's own, or the one it inherited from the spine.
+type Promoted = Map ClaimedKey (Either CryptoError PrecomputedKey)
 
 {- | A line's signature, ready to judge — or a key that cannot carry one.
 
 'KeyRejected' is not an error and not yet a fault: it is a line that will not
 reach the batch, and the batch's results have to be stitched back around it.
+
+Parameterized over the key because the two signature streams run on two
+kernels: a Produced Proof's key is a t'PrecomputedKey', an assertion's a
+t'EventChain.Crypto.PublicKey', and the stitching below never looks at either.
 -}
-data Checkable
+data Checkable k
     = KeyRejected
-    | Checkable (PublicKey, SignedBytes, Sig)
+    | Checkable (k, SignedBytes, Sig)
 
 {- | Promote the claimed key and derive the signing message from what the line said.
 
 The key comes through the chunk's shared promotion map, so a run of lines under
-one Producer's key holds one loaded key rather than a copy per line. The default
-is a direct promotion and nothing relies on it being unreachable — a claim
-missing from a map built over this same chunk cannot happen, but a fresh load
-answers it identically if it somehow did.
+one Producer's key holds one loaded key and one table rather than a copy per
+line. The default is a direct promotion and nothing relies on it being
+unreachable — a claim missing from a map built over this same chunk cannot
+happen, but a fresh load answers it identically if it somehow did.
 -}
-prepare :: Map ClaimedKey (Either CryptoError PublicKey) -> DecodedEntry -> Either CryptoError Checkable
-prepare promoted d = case Map.findWithDefault (publicKey claim) claim promoted of
+prepare :: Promoted -> DecodedEntry -> Either CryptoError (Checkable PrecomputedKey)
+prepare promoted d = case Map.findWithDefault (precomputeKey <$> publicKey claim) claim promoted of
     Left KeyNotOnCurve -> Right KeyRejected
     Left err -> Left err
     Right k -> Right (Checkable (k, message, proof.signature))
@@ -479,7 +528,7 @@ prepare promoted d = case Map.findWithDefault (publicKey claim) claim promoted o
 
 {- | Put a batch's answers back beside the lines they are about.
 
-'verifyBatch' answers one t'SigCheck' per triple, in order, and lines whose key
+A batch answers one t'SigCheck' per triple, in order, and lines whose key
 was rejected supplied no triple. A mismatched answer count in either direction
 is a broken contract, so it is an error rather than a verdict: a Verifier that
 quietly ran out of answers — or quietly had answers left over, which means the
@@ -491,16 +540,16 @@ identically and mean differently: a Produced Proof's rejected key is
 'AttesterKeyOffCurve', and the answer @no@ is 'SignatureInvalid' on one side
 of the seam and 'AssertionInvalid' on the other.
 -}
-stitch :: [Fault] -> (SigCheck -> [Fault]) -> [Checkable] -> [SigCheck] -> [Either CryptoError [Fault]]
+stitch :: [Fault] -> (SigCheck -> [Fault]) -> [Checkable k] -> [SigCheck] -> [Either CryptoError [Fault]]
 stitch rejectedKey answered = go
   where
     go [] [] = []
     go (KeyRejected : more) checks = Right rejectedKey : go more checks
     go (Checkable _ : more) (c : checks) = Right (answered c) : go more checks
     go (Checkable _ : _) [] =
-        error "EventChain.Verify: verifyBatch answered fewer checks than it was given."
+        error "EventChain.Verify: a signature batch answered fewer checks than it was given."
     go [] (_ : _) =
-        error "EventChain.Verify: verifyBatch answered more checks than it was given."
+        error "EventChain.Verify: a signature batch answered more checks than it was given."
 
 {- | What each line's Mint envelope establishes: structural findings, and the
 assertion's answer from the crypto seam. A lifecycle line contributes nothing
