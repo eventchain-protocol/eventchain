@@ -43,6 +43,7 @@ tests =
         [ testGroup "hashing" hashProps
         , testGroup "keys" keyProps
         , testGroup "signatures" sigProps
+        , testGroup "precomputed key against libcrypto" oracleProps
         ]
 
 -- Generators -----------------------------------------------------------------
@@ -258,6 +259,93 @@ sigProps =
         -- Catches a context reused across a batch leaking state between items.
         verifyBatch triples === traverse (\t -> one <$> verifyBatch [t]) triples
     ]
+
+-- The differential oracle --------------------------------------------------
+
+{- | The fixed-base kernel graded by libcrypto, triple for triple.
+
+ADR-0004 as amended: libcrypto's verify is no longer the implementation but
+the oracle. Every triple below goes through both 'verifyBatch' and
+'verifyBatchPrecomputed', and any disagreement is a failure — not a valid
+signature rejected, not an invalid one accepted, but the two answering
+differently about the same bytes. The generators are the hostile ones above,
+plus signatures built to sit on the range checks' edges: @r@ or @s@ zero, one,
+@n - 1@, @n@, @n + 1@ and all-@0xFF@, which libcrypto rejects before any curve
+arithmetic and the kernel must reject identically.
+-}
+oracleProps :: [TestTree]
+oracleProps =
+    [ testProperty "what was signed: both agree" . property $ do
+        k <- forAllWith showKey genPrivateKey
+        msgs <- forAll (Gen.list (Range.linear 1 8) genBytes)
+        let pub = expect (publicKey (privateKeyPublic k))
+            triples = [(pub, signedBytes m, sig) | m <- msgs, Right sig <- [sign k (signedBytes m)]]
+        agree triples
+    , testProperty "a different message, a different key: both agree" . property $ do
+        a <- forAllWith showKey genPrivateKey
+        b <- forAllWith showKey (Gen.filter (\k -> privateKeyPublic k /= privateKeyPublic a) genPrivateKey)
+        msg <- forAll genBytes
+        other <- forAll (Gen.filter (/= msg) genBytes)
+        let pubA = expect (publicKey (privateKeyPublic a))
+            pubB = expect (publicKey (privateKeyPublic b))
+            sig = expect (sign a (signedBytes msg))
+        agree [(pubA, signedBytes other, sig), (pubB, signedBytes msg, sig), (pubA, signedBytes msg, sig)]
+    , testProperty "every byte of a signature perturbed: both agree" . property $ do
+        k <- forAllWith showKey genPrivateKey
+        msg <- forAll genBytes
+        i <- forAll (Gen.int (Range.linear 0 63))
+        delta <- forAll (Gen.element [1, 0x80, 0xFF])
+        let pub = expect (publicKey (privateKeyPublic k))
+            raw = sigRaw (expect (sign k (signedBytes msg)))
+            flipped = BS.take i raw <> BS.singleton (BS.index raw i + delta) <> BS.drop (i + 1) raw
+        agree [(pub, signedBytes msg, expect (sigFromRaw flipped))]
+    , testProperty "r and s at the edges of the range: both agree" . property $ do
+        k <- forAllWith showKey genPrivateKey
+        msg <- forAll genBytes
+        edgeR <- forAll (Gen.element edges)
+        edgeS <- forAll (Gen.element edges)
+        let pub = expect (publicKey (privateKeyPublic k))
+            raw = sigRaw (expect (sign k (signedBytes msg)))
+            halves = [(edgeR <> BS.drop 32 raw), (BS.take 32 raw <> edgeS), (edgeR <> edgeS)]
+        agree [(pub, signedBytes msg, expect (sigFromRaw h)) | h <- halves]
+    , testProperty "arbitrary 64 bytes: both agree" . property $ do
+        k <- forAllWith showKey genPrivateKey
+        msg <- forAll genBytes
+        raw <- forAll (Gen.bytes (Range.singleton 64))
+        let pub = expect (publicKey (privateKeyPublic k))
+        agree [(pub, signedBytes msg, expect (sigFromRaw raw))]
+    , testProperty "a batch is its items, and the keys may interleave" . property $ do
+        a <- forAllWith showKey genPrivateKey
+        b <- forAllWith showKey genPrivateKey
+        pairs <- forAll (Gen.list (Range.linear 0 6) ((,) <$> Gen.bool <*> genBytes))
+        let pubA = expect (publicKey (privateKeyPublic a))
+            pubB = expect (publicKey (privateKeyPublic b))
+            triples =
+                [ (if useA then pubA else pubB, signedBytes m, sig)
+                | (useA, m) <- pairs
+                , Right sig <- [sign (if useA then a else b) (signedBytes m)]
+                ]
+            precomputed = [(precomputeKey pub, m, sig) | (pub, m, sig) <- triples]
+        verifyBatchPrecomputed precomputed === concatMap (\t -> verifyBatchPrecomputed [t]) precomputed
+        agree triples
+    ]
+  where
+    edges =
+        [ BS.replicate 32 0x00
+        , BS.replicate 31 0x00 <> BS.singleton 0x01
+        , BS.init orderBytes <> BS.singleton 0x50 -- n - 1
+        , orderBytes
+        , BS.init orderBytes <> BS.singleton 0x52 -- n + 1
+        , BS.replicate 32 0xFF
+        ]
+
+-- | Both kernels on the same triples. libcrypto must answer; the answers must match.
+agree :: [(PublicKey, SignedBytes, Sig)] -> PropertyT IO ()
+agree triples = do
+    let oracle = verifyBatch triples
+        kernel = verifyBatchPrecomputed [(precomputeKey pub, m, sig) | (pub, m, sig) <- triples]
+    annotateShow oracle
+    oracle === Right kernel
 
 {- | The one answer a chunk of one produces.
 

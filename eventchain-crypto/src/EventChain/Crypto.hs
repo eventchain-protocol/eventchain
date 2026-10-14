@@ -25,7 +25,10 @@ This module is where claims become facts, and it is the only one that can do it:
 * 'publicKey' is the only way to obtain a 'PublicKey', and obtaining one /is/ the
   on-curve proof.
 * 'verifyBatch' is the only thing that can answer whether a signature is a
-  signer's.
+  signer's — and 'verifyBatchPrecomputed' is the same answer from a
+  'PrecomputedKey', which is a 'PublicKey' plus a table of its multiples
+  (ADR-0004 as amended). Same question, a different kernel underneath: the
+  libcrypto path is the oracle the fixed-base path is graded against.
 
 == The API is pure, and honestly so
 
@@ -65,6 +68,12 @@ module EventChain.Crypto
     , sign
     , verifyBatch
 
+      -- * Verification from a precomputed key
+    , PrecomputedKey
+    , precomputeKey
+    , precomputedKeyPublic
+    , verifyBatchPrecomputed
+
       -- * Errors
     , CryptoError (..)
     ) where
@@ -83,3 +92,4 @@ import EventChain.Crypto.Internal.Ecdsa
     , verifyBatch
     )
 import EventChain.Crypto.Internal.Error (CryptoError (..))
+import EventChain.Crypto.Internal.Precomputed (PrecomputedKey, precomputeKey, precomputedKeyPublic, verifyBatchPrecomputed)

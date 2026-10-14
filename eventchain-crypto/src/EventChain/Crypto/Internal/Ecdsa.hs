@@ -53,6 +53,7 @@ module EventChain.Crypto.Internal.Ecdsa
     , publicKey
     , publicKeyClaim
     , publicKeyRaw
+    , publicKeyPoint
     , PrivateKey
     , privateKey
     , privateKeyPublic
@@ -229,6 +230,35 @@ publicKeyClaim (PublicKey _ c) = c
 -- | The key's compressed point bytes.
 publicKeyRaw :: PublicKey -> ByteString
 publicKeyRaw = claimedKeyRaw . publicKeyClaim
+
+{- | The key's affine coordinates, @x@ then @y@, each 32 bytes big-endian.
+
+Read back from the loaded key rather than recomputed: decompressing the claim
+is what 'publicKey' did, and @y@ is sitting in the @EVP_PKEY@. The read is
+non-mutating, so a key shared across threads stays shareable. This is the one
+thing the fixed-base kernel needs from libcrypto per key — the table it builds
+is a function of these 64 bytes.
+
+Total: a 'PublicKey' exists only because @fromdata@ accepted the point, so a
+missing or oversized coordinate is libcrypto contradicting itself, and that is
+an 'error', not an 'Either'.
+-}
+publicKeyPoint :: PublicKey -> (ByteString, ByteString)
+publicKeyPoint (PublicKey pkey _) = unsafePerformIO $
+    withForeignPtr pkey $
+        \k -> (,) <$> coordinate k "qx" <*> coordinate k "qy"
+  where
+    coordinate k name = alloca $ \out -> do
+        poke out nullPtr
+        ok <- withNamed name $ \n -> c_EVP_PKEY_get_bn_param k n out
+        p <- peek out
+        when (ok /= 1 || p == nullPtr) $
+            error ("EventChain.Crypto: EVP_PKEY_get_bn_param found no " <> name <> " on a loaded key.")
+        bn <- newForeignPtr p_BN_free p
+        withForeignPtr bn $ \b -> BSI.create 32 $ \buf -> do
+            n <- c_BN_bn2binpad_owned b buf 32
+            when (n < 0) $ error ("EventChain.Crypto: a loaded key's " <> name <> " does not fit in 32 bytes.")
+{-# NOINLINE publicKeyPoint #-}
 
 {- | Take 32 bytes as a private scalar, deriving the point that belongs to it.
 

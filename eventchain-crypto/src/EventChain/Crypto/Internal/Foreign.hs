@@ -1,4 +1,4 @@
--- This file is long because it is the single FFI seam: every foreign import in the system lives here by rule (ADR-0004), one block per libcrypto entry point, each carrying the C contract it relies on.
+-- This file is long because it is the single FFI seam: every foreign import in the system lives here by rule (ADR-0004), one block per libcrypto and s2n-bignum entry point, each carrying the C contract it relies on.
 {-# LANGUAGE CApiFFI #-}
 
 {- | The language seam: every line of libcrypto we speak to, and nothing else.
@@ -107,16 +107,38 @@ module EventChain.Crypto.Internal.Foreign
     , nidP256
     , pointConversionCompressed
 
+      -- * Reading a key's coordinates
+    , c_EVP_PKEY_get_bn_param
+    , c_BN_bn2binpad_owned
+
       -- * The error queue
     , c_ERR_get_error
     , c_ERR_clear_error
+
+      -- * s2n-bignum: the fixed-base P-256 kernel
+    , c_p256_scalarmulbase
+    , c_p256_montjmixadd
+    , c_p256_montjdouble
+    , c_bignum_montinv_p256
+    , c_bignum_montmul_p256
+    , c_bignum_montsqr_p256
+    , c_bignum_tomont_p256
+    , c_bignum_demont_p256
+    , c_bignum_mod_n256_4
+    , c_bignum_mod_n256
+    , c_bignum_mul_4_8
+    , c_bignum_modinv
+    , c_bignum_frombebytes_4
+    , c_bignum_nonzero_4
+    , c_bignum_eq
+    , c_bignum_lt
 
       -- * Selection constants
     , evpPkeyPublicKey
     , evpPkeyKeypair
     ) where
 
-import Data.Word (Word8)
+import Data.Word (Word64, Word8)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..), CLong (..), CSize (..), CUInt (..), CULong (..))
 import Foreign.ForeignPtr (FinalizerPtr)
@@ -461,3 +483,107 @@ foreign import capi unsafe "openssl/err.h ERR_get_error"
 
 foreign import capi unsafe "openssl/err.h ERR_clear_error"
     c_ERR_clear_error :: IO ()
+
+-- Reading a key's coordinates ----------------------------------------------
+
+{- | Read a key parameter as a bignum. With @*bn@ NULL on entry, libcrypto
+allocates one, which the caller then owns.
+
+How a key's affine @x@ and @y@ come out for the fixed-base table: the AOF
+carries the point compressed, and decompressing it is what 'c_EVP_PKEY_fromdata'
+already did, so the coordinates are read back from the loaded key rather than
+recomputed. Reading is non-mutating, so it is safe on a key shared across
+threads; the alternative — setting the point-format parameter and reading the
+encoded key — mutates the key and is not.
+-}
+foreign import capi safe "openssl/evp.h EVP_PKEY_get_bn_param"
+    c_EVP_PKEY_get_bn_param :: Ptr EVP_PKEY -> CString -> Ptr (Ptr BIGNUM) -> IO CInt
+
+{- | 'c_BN_bn2binpad' for a bignum we own rather than one borrowed from a
+signature. The same C function under a second Haskell name, the way
+'c_EVP_DigestUpdate_safe' is: the @const@ in the C prototype accepts either, and
+the Haskell type records which this is.
+-}
+foreign import capi unsafe "openssl/bn.h BN_bn2binpad"
+    c_BN_bn2binpad_owned :: Ptr BIGNUM -> Ptr Word8 -> CInt -> IO CInt
+
+-- s2n-bignum ------------------------------------------------------------------
+
+{- $s2n
+The fixed-base ECDSA-P256 verification kernel (ADR-0004 as amended) runs on
+vendored s2n-bignum assembly, each function a formally verified leaf: no
+allocation, no state, no error path, fixed-size arrays in and out. The C
+prototypes come from upstream's own header, vendored byte-for-byte beside the
+sources and reached through a three-line guard header of ours (upstream's has
+none, and the @capi@ stub includes it once per import), so @capi@ checks each
+import against what the assembly actually takes.
+
+All limb arrays are little-endian 64-bit words, four to a 256-bit value, eight
+to an affine point, twelve to a Jacobian one. Montgomery form where the name
+says so. What each is proven to do — including what happens on infinity and
+on equal or opposite inputs — is stated in upstream's @arm/proofs/*.ml@; the
+kernel module quotes the preconditions it relies on at each call.
+
+@safe@ or @unsafe@ by the same rule as everything above. One table walk is
+~6 µs, which is long enough to let the capability go; everything else here is
+under a microsecond and would pay more to release than to hold.
+-}
+
+-- | @res = scalar * P@, affine, for a table of @P@'s multiples. ~6 µs at blocksize 7.
+foreign import capi safe "eventchain-s2n-bignum.h p256_scalarmulbase"
+    c_p256_scalarmulbase :: Ptr Word64 -> Ptr Word64 -> Word64 -> Ptr Word64 -> IO ()
+
+-- | @p3 = p1 + p2@, @p1@ Jacobian and @p2@ affine. Proven for @p1@ infinity and for @p1 = -p2@; /not/ for @p1 = p2@.
+foreign import capi unsafe "eventchain-s2n-bignum.h p256_montjmixadd"
+    c_p256_montjmixadd :: Ptr Word64 -> Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | @p3 = 2 * p1@, Jacobian. Proven for every input, infinity included.
+foreign import capi unsafe "eventchain-s2n-bignum.h p256_montjdouble"
+    c_p256_montjdouble :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | Inverse mod p in the Montgomery domain; zero for zero.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_montinv_p256"
+    c_bignum_montinv_p256 :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_montmul_p256"
+    c_bignum_montmul_p256 :: Ptr Word64 -> Ptr Word64 -> Ptr Word64 -> IO ()
+
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_montsqr_p256"
+    c_bignum_montsqr_p256 :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_tomont_p256"
+    c_bignum_tomont_p256 :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_demont_p256"
+    c_bignum_demont_p256 :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | @z = x mod n@ for a 4-limb @x@.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_mod_n256_4"
+    c_bignum_mod_n256_4 :: Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | @z = x mod n@ for a @k@-limb @x@: the reduction after a 4×4 product.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_mod_n256"
+    c_bignum_mod_n256 :: Ptr Word64 -> Word64 -> Ptr Word64 -> IO ()
+
+-- | The 8-limb product of two 4-limb values.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_mul_4_8"
+    c_bignum_mul_4_8 :: Ptr Word64 -> Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | @z = a^-1 mod b@ for @k@-limb values, @b@ odd and coprime to @a@; @t@ is scratch of at least @3k@ limbs.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_modinv"
+    c_bignum_modinv :: Word64 -> Ptr Word64 -> Ptr Word64 -> Ptr Word64 -> Ptr Word64 -> IO ()
+
+-- | 32 big-endian bytes — a wire @r@, @s@ or digest — as 4 limbs.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_frombebytes_4"
+    c_bignum_frombebytes_4 :: Ptr Word64 -> Ptr Word8 -> IO ()
+
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_nonzero_4"
+    c_bignum_nonzero_4 :: Ptr Word64 -> IO Word64
+
+-- | @x = y@ for an @m@-limb @x@ and @n@-limb @y@. Nonzero when equal.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_eq"
+    c_bignum_eq :: Word64 -> Ptr Word64 -> Word64 -> Ptr Word64 -> IO Word64
+
+-- | @x < y@, likewise.
+foreign import capi unsafe "eventchain-s2n-bignum.h bignum_lt"
+    c_bignum_lt :: Word64 -> Ptr Word64 -> Word64 -> Ptr Word64 -> IO Word64

@@ -32,6 +32,16 @@ build-type:         Simple
 -- breaks on our word.
 tested-with:        GHC ==9.12.4
 
+-- The vendored assembly's header and licence travel with the sdist; the
+-- `.S` files themselves are picked up from `asm-sources`.
+extra-source-files:
+    cbits/eventchain-s2n-bignum.h
+    cbits/s2n-bignum/include/_internal_s2n_bignum_arm.h
+    cbits/s2n-bignum/include/s2n-bignum.h
+    cbits/s2n-bignum/LICENSE
+    cbits/s2n-bignum/NOTICE
+    cbits/s2n-bignum/README.md
+
 -- One exposed facade over hidden type modules -- aeson's shape for
 -- `Data.Aeson.Types` over `Data.Aeson.Types.Internal`. The inventory ships in
 -- `other-modules` so that a hidden module's unexported constructor cannot be
@@ -60,6 +70,7 @@ library
     other-modules:
         EventChain.Crypto.Internal.Digest
         EventChain.Crypto.Internal.Ecdsa
+        EventChain.Crypto.Internal.Precomputed
         EventChain.Crypto.Internal.Error
         EventChain.Crypto.Internal.Foreign
         EventChain.Crypto.Types.Internal.Bytes
@@ -79,6 +90,38 @@ library
     -- choose. macOS: Homebrew's openssl@3 is keg-only, so PKG_CONFIG_PATH must
     -- point at it (see the README).
     pkgconfig-depends:  libcrypto >=3.2
+
+    -- ADR-0004 as amended: ECDSA-P256 verification runs on vendored s2n-bignum
+    -- assembly (fixed-base scalar multiplication from a per-key table), which
+    -- is where the 2x over libcrypto's verify comes from. The sources are
+    -- byte-for-byte upstream copies -- see cbits/s2n-bignum/README.md for the
+    -- commit and the refresh procedure. arm64 only until a build has run
+    -- elsewhere: the x86-64 twins are a separate vendoring under the other
+    -- arch branch, and `tested-with` lists what is built, not what is hoped.
+    if !arch(aarch64)
+        -- Refused rather than linked without the kernel: the FFI seam names
+        -- these symbols, so a build here would fail at link time of the first
+        -- test suite with a message about them, and this says why first.
+        buildable: False
+    if arch(aarch64)
+        include-dirs:   cbits cbits/s2n-bignum/include
+        asm-sources:
+            cbits/s2n-bignum/arm/bignum_bigendian_4.S
+            cbits/s2n-bignum/arm/bignum_demont_p256.S
+            cbits/s2n-bignum/arm/bignum_eq.S
+            cbits/s2n-bignum/arm/bignum_lt.S
+            cbits/s2n-bignum/arm/bignum_mod_n256.S
+            cbits/s2n-bignum/arm/bignum_mod_n256_4.S
+            cbits/s2n-bignum/arm/bignum_modinv.S
+            cbits/s2n-bignum/arm/bignum_montinv_p256.S
+            cbits/s2n-bignum/arm/bignum_montmul_p256.S
+            cbits/s2n-bignum/arm/bignum_montsqr_p256.S
+            cbits/s2n-bignum/arm/bignum_mul_4_8.S
+            cbits/s2n-bignum/arm/bignum_nonzero_4.S
+            cbits/s2n-bignum/arm/bignum_tomont_p256.S
+            cbits/s2n-bignum/arm/p256_montjdouble.S
+            cbits/s2n-bignum/arm/p256_montjmixadd.S
+            cbits/s2n-bignum/arm/p256_scalarmulbase.S
 
 -- The kernels are graded by bytes we did not choose. `docs/plan.md` asked for
 -- OpenSSL CLI fixtures; those are the same libcrypto we call, so they prove

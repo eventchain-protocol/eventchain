@@ -93,6 +93,12 @@ rfc6979Kats =
             s2 = expect (sign key (signedBytes "test"))
         verifyBatch [(pub, signedBytes "sample", s1), (pub, signedBytes "test", s2)]
             === Right [SigValid, SigValid]
+    , testProperty "every RFC signature verifies through the precomputed key" . withTests 1 . property $ do
+        let pub = precomputeKey (expect (publicKey (privateKeyPublic key)))
+            s1 = expect (sign key (signedBytes "sample"))
+            s2 = expect (sign key (signedBytes "test"))
+        verifyBatchPrecomputed [(pub, signedBytes "sample", s1), (pub, signedBytes "test", s2)]
+            === [SigValid, SigValid]
     ]
   where
     signature message r s =

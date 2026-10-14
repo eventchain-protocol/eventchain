@@ -45,6 +45,22 @@ main = do
     verifyRate <- time 5000 (evaluate (verifyBatch (replicate 5000 (pub, msg, sig))))
     printf "%-22s %10.0f /s   %9.0f /s\n" "verify (1 core)" verifyRate (24500 :: Double)
 
+    -- The fixed-base kernel (ADR-0004 as amended): the same 5000 triples
+    -- through the precomputed key. The C spike put it at 2.25x libcrypto's
+    -- verify at this table geometry; the row says what the Haskell loop keeps.
+    let pre = precomputeKey pub
+    _ <- evaluate pre
+    verifyPreRate <- time 5000 (evaluate (foldl' (\ !a v -> v `seq` a) () (verifyBatchPrecomputed (replicate 5000 (pre, msg, sig)))))
+    printf "%-22s %10.0f /s   %9s\n" "verify precomputed" verifyPreRate "-"
+
+    -- What a key's table costs to build: the once-per-key price the Verifier
+    -- pays where it promotes keys. 200 distinct keys, promoted before the
+    -- clock -- one key repeated is one shared thunk, and times nothing.
+    let pubs = [expect (publicKey (privateKeyPublic (expect (privateKey (BS.pack ([1 .. 31] <> [fromIntegral i])))))) | i <- [8 .. 207 :: Int]]
+    _ <- evaluate (length (map publicKeyClaim pubs))
+    tableRate <- time 200 (forM_ pubs $ \p -> evaluate (precomputeKey p))
+    printf "%-22s %10.0f /s   %9s   (%.0f us each)\n" "precompute key" tableRate "-" (1e6 / tableRate)
+
     signRate <- time 2000 (forM_ [1 .. 2000 :: Int] $ \i -> evaluate (sign sk (signedBytes (C8.pack (show i)))))
     printf "%-22s %10.0f /s   %9s\n" "sign (RFC 6979)" signRate "-"
 

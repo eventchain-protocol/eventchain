@@ -73,6 +73,10 @@ _Avoid_: provisional (implies the level-one proof is incomplete)
 The offline checker: chain continuity, attribution, payload commitments, and (optionally) Anchors. Needs only the AOF for the first two. A separate package that shares no format logic with the Producer (ADR-0005) — it re-derives the wire format from the normative document, so that its agreement is evidence rather than a shared assumption. Crypto is the deliberate exception: both sides call the same kernels.
 _Avoid_: validator, auditor
 
+**Precomputed key**:
+A Producer's public key together with a table of its multiples, built once per key so that each signature check is two fixed-base table walks rather than a general scalar multiplication (ADR-0004 as amended). The table is derived from a key already proven on the curve; it carries no new fact, only speed. Built where the Verifier promotes keys, kept for as long as that key's run lasts.
+_Avoid_: cached key, key context
+
 **Checkpoint**:
 The last Entry a holder verified, as its position and entry hash. What a resumed verification starts from: the holder checks each Entry once, when it arrives, keeps the Checkpoint, and folds only the lines after it next time. A claim, trusted exactly as far as the holder's own record — the Verifier checks the tail's first link against it and cannot check the Checkpoint itself.
 _Avoid_: cursor, offset, bookmark, watermark
