@@ -167,9 +167,11 @@ table built once per Producer key, on vendored, formally verified
 [s2n-bignum](https://github.com/awslabs/s2n-bignum) assembly, against the
 general scalar multiplication libcrypto's verify performs — 2.25× per
 signature on the same machine in the same session. The table is built once
-per Producer key per run: the fold's spine reads the key each chunk's last
-line signed with and hands the next chunk that key's promotion, so a run of
-one key shares one table. End to end the fold gained 1.43× at one
+per Producer key per run, and only where it pays: the fold's spine reads the
+key each chunk's last line signed with and hands the next chunk that key's
+promotion, so a run of one key shares one table, and a key signing too few
+lines of a chunk to amortize a table verifies on libcrypto instead, so a Hub
+checking one line per append pays libcrypto's price and not a table's. End to end the fold gained 1.43× at one
 capability and 1.42× at twelve, measured against the previous kernel built
 beside it: once a signature check halves, the fold's own overhead under
 parallel load is the larger remaining share, and it is the next thing to

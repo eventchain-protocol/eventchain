@@ -169,6 +169,42 @@ most there. Cumulatively against the unmodified HEAD built beside it:
 | verify, -N12 | 4.84 µs (206.5k/s) | 3.41 µs (293.1k/s) | 1.42× |
 | verify, -N16 | 4.97 µs (201.3k/s) | 3.39 µs (294.6k/s) | 1.47× |
 
+### The one-line fold: a regression found by the Producer benches, and the break-even
+
+Rerunning every bench afterwards, the hub-append bench's calibration line
+read *one checked append 554.8 µs* against the 65.0 µs its note records. A
+Hub that verifies each append as it arrives folds one line at a time, and a
+one-line fold under a key it has never seen built a 520 µs table for one
+signature — a 6.5× regression on exactly the caller the per-chunk placement
+had not considered. The fix is a break-even rule in the fold
+(`tableBreakEven`): a key promoted within a chunk gets a table only if it
+signs at least 28 of the chunk's lines (520 µs ÷ the 18.7 µs a walk saves),
+and verifies on libcrypto's general kernel otherwise; a key inherited from
+the spine brings its table regardless. Two kernels per chunk means two
+batches, stitched back beside their lines by which queue each key's answer
+is at the head of. The verify bench now proves that stitching before it
+times anything: a two-key file, the second key every fiftieth line so each
+chunk holds a few of its lines under the break-even, one line forged under
+each key, and the fold must blame exactly those two positions and the two
+chain links after them.
+
+After the fix, same session: one checked append 65.0 µs, the recorded
+figure; the 100k-line one-key file 13.9–14.0 µs at -N1 and 3.2–3.3 at -N12
+on both the committed tree and this one, measured in the same minutes at a
+load of 7 — the rule costs nothing this machine can resolve at that load.
+
+### The Producer benches, rerun
+
+contention, batching and hub-append all reran. None of their code changed,
+and none of their rows moved for a reason in this work: the batching
+bench's ceiling read 40.2k against the 28.5k its note records, because
+that note was taken in the slow October session (its own text says 35.1 µs
+per `produce` against 22.3 µs in July) and today's 25.2 µs is July's
+number. The contention rows sit on their offered rates and predictions as
+recorded. Those notes stand as the record of their sessions; the trap
+above — do not compare across sessions — is the reason they were not
+rewritten.
+
 ## What this changes upstream
 
 - The README's performance section and figures quote this file's final rows.

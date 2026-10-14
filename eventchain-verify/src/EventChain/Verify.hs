@@ -41,8 +41,12 @@ multiplication. The table is a function of a key already proven on the curve;
 it adds no fact. A run of one key across chunks builds it once: the spine
 hands each chunk the promotion of the key its predecessor's last line signed
 with, read from that one line, and a chunk whose lines carry that key shares
-the thunk rather than making its own. Mint assertions stay on libcrypto's
-verify: they are rare, and their attester keys are not runs.
+the thunk rather than making its own. A key with too few lines in its chunk
+to pay for a table, and no table inherited, verifies on libcrypto instead
+('tableBreakEven') — which is what keeps a one-line fold, a Hub checking
+each append as it arrives, at libcrypto's cost rather than a table's. Mint
+assertions stay on libcrypto's verify: they are rare, and their attester
+keys are not runs.
 -}
 module EventChain.Verify
     ( -- * What the fold establishes
@@ -76,7 +80,7 @@ import Data.Map.Lazy (Map)
 import Data.Map.Lazy qualified as Map
 import Data.Text (Text)
 import Data.Word (Word64)
-import EventChain.Crypto (CryptoError (..), PrecomputedKey, SigCheck (..), hashClientData, hashLines, precomputeKey, publicKey, verifyBatch, verifyBatchPrecomputed)
+import EventChain.Crypto (CryptoError (..), PrecomputedKey, PublicKey, SigCheck (..), hashClientData, hashLines, precomputeKey, publicKey, verifyBatch, verifyBatchPrecomputed)
 import EventChain.Crypto.Types (ClaimedKey, LineHash, Sig, SignedBytes, lineBytes, lineHashFromBytes, sha256Length)
 import EventChain.Verify.Canonical (canonicalize, signingMessage)
 import EventChain.Verify.EntryObject (EntryObject (..), MintMembers (..))
@@ -357,7 +361,7 @@ fold prev lns = untilHalt (map (\(p, s, c) -> chunkVerdicts p s c) staged `using
     seed inherited = \case
         Just c
             | Map.member c inherited -> inherited
-            | otherwise -> Map.singleton c (precomputeKey <$> publicKey c)
+            | otherwise -> Map.singleton c (Precomputed . precomputeKey <$> publicKey c)
         Nothing -> Map.empty
 
     untilHalt [] = []
@@ -476,33 +480,68 @@ plain list — so the only 'Left' here is the promotion's.
 attributionResults :: Promoted -> [DecodedEntry] -> [Either CryptoError [Fault]]
 attributionResults inherited decoded = case traverse (prepare promoted) decoded of
     Left err -> map (const (Left err)) decoded
-    Right prepared -> stitch [KeyOffCurve] answered prepared (verifyBatchPrecomputed [t | Checkable t <- prepared])
+    Right prepared ->
+        let tabled = verifyBatchPrecomputed [(k, m, sig) | Checkable (Precomputed k, m, sig) <- prepared]
+         in case verifyBatch [(k, m, sig) | Checkable (General k, m, sig) <- prepared] of
+                Left err -> map (const (Left err)) decoded
+                Right general -> stitch [KeyOffCurve] answered isTabled prepared tabled general
   where
     answered SigValid = []
     answered SigInvalid = [SignatureInvalid]
 
-    -- One promotion and one table per distinct key in the chunk, never one
-    -- per line — and none at all for the key the chunk inherited, whose
-    -- thunk is the previous chunk's. Promoting is a ~15 µs EVP_PKEY load and
-    -- the table ~520 µs of curve arithmetic, against a ~15 µs verify; an AOF
-    -- is mostly runs of one Producer's key, so a run pays for one table where
-    -- a chunk on its own would pay ~2 µs a line. The map is value-lazy on
+    isTabled = \case
+        Precomputed _ -> True
+        General _ -> False
+
+    -- One promotion per distinct key in the chunk, never one per line — and
+    -- a table only where it pays. A key the chunk inherited brings the
+    -- previous chunk's thunk, table included. A key promoted here gets a
+    -- table if it signs at least 'tableBreakEven' of the chunk's lines, and
+    -- libcrypto's general verify otherwise: a ~520 µs table against ~19 µs
+    -- saved per line is a loss below that count. The map is value-lazy on
     -- purpose: each distinct key is one thunk, loaded and tabulated the first
     -- time a line needs it.
-    promoted = Map.fromList [(c, Map.findWithDefault (precomputeKey <$> publicKey c) c inherited) | d <- decoded, let c = claimOf d]
+    promoted = Map.fromList [(c, Map.findWithDefault (kernelFor c) c inherited) | d <- decoded, let c = claimOf d]
+    kernelFor c
+        | Map.findWithDefault 0 c linesUnder >= tableBreakEven = Precomputed . precomputeKey <$> publicKey c
+        | otherwise = General <$> publicKey c
+    linesUnder = Map.fromListWith (+) [(claimOf d, 1 :: Int) | d <- decoded]
     claimOf d = (decodedEntry d).producedProof.publicKey
 
+{- | The kernel a Produced Proof's key verifies on: the fixed-base walk from
+a table of the key's multiples, or libcrypto's general verify. Same answer
+either way — the crypto package's differential suite is what says so — and
+the choice is cost alone.
+-}
+data Kernel
+    = Precomputed PrecomputedKey
+    | General PublicKey
+
 -- | Promotions by claim: the chunk's own, or the one it inherited from the spine.
-type Promoted = Map ClaimedKey (Either CryptoError PrecomputedKey)
+type Promoted = Map ClaimedKey (Either CryptoError Kernel)
+
+{- | Lines a key must sign within a chunk before its table pays for itself.
+
+The table costs ~520 µs to build and each walk saves ~19 µs over the general
+verify (34.3 against 15.6 µs on this project's dev machine, the crypto
+bench's rows), so the break-even is 28 lines. Below it a key verifies on
+libcrypto; at or above it, on the table. A run of one key inherits its table
+from the spine and never consults this. Measured for: a Hub checking each
+append as it arrives folds one line at a time, and at one line a table is a
+6.5× regression over the general verify, not a gain.
+-}
+tableBreakEven :: Int
+tableBreakEven = 28
 
 {- | A line's signature, ready to judge — or a key that cannot carry one.
 
 'KeyRejected' is not an error and not yet a fault: it is a line that will not
 reach the batch, and the batch's results have to be stitched back around it.
 
-Parameterized over the key because the two signature streams run on two
-kernels: a Produced Proof's key is a t'PrecomputedKey', an assertion's a
-t'EventChain.Crypto.PublicKey', and the stitching below never looks at either.
+Parameterized over the key because the two signature streams carry
+different ones: a Produced Proof's is a t'Kernel', an assertion's a
+t'EventChain.Crypto.PublicKey', and the stitching below asks the key only
+which batch it went to.
 -}
 data Checkable k
     = KeyRejected
@@ -512,12 +551,13 @@ data Checkable k
 
 The key comes through the chunk's shared promotion map, so a run of lines under
 one Producer's key holds one loaded key and one table rather than a copy per
-line. The default is a direct promotion and nothing relies on it being
-unreachable — a claim missing from a map built over this same chunk cannot
-happen, but a fresh load answers it identically if it somehow did.
+line. The default is a direct promotion onto the general kernel and nothing
+relies on it being unreachable — a claim missing from a map built over this
+same chunk cannot happen, but a fresh load answers it identically if it
+somehow did.
 -}
-prepare :: Promoted -> DecodedEntry -> Either CryptoError (Checkable PrecomputedKey)
-prepare promoted d = case Map.findWithDefault (precomputeKey <$> publicKey claim) claim promoted of
+prepare :: Promoted -> DecodedEntry -> Either CryptoError (Checkable Kernel)
+prepare promoted d = case Map.findWithDefault (General <$> publicKey claim) claim promoted of
     Left KeyNotOnCurve -> Right KeyRejected
     Left err -> Left err
     Right k -> Right (Checkable (k, message, proof.signature))
@@ -529,7 +569,9 @@ prepare promoted d = case Map.findWithDefault (precomputeKey <$> publicKey claim
 {- | Put a batch's answers back beside the lines they are about.
 
 A batch answers one t'SigCheck' per triple, in order, and lines whose key
-was rejected supplied no triple. A mismatched answer count in either direction
+was rejected supplied no triple. Two batches may have run — a chunk's lines
+split between the table kernel and the general one by key — so each
+checkable says which queue its answer is at the head of. A mismatched answer count in either direction
 is a broken contract, so it is an error rather than a verdict: a Verifier that
 quietly ran out of answers — or quietly had answers left over, which means the
 pairing above them slipped — would report faults against the wrong lines.
@@ -540,16 +582,20 @@ identically and mean differently: a Produced Proof's rejected key is
 'AttesterKeyOffCurve', and the answer @no@ is 'SignatureInvalid' on one side
 of the seam and 'AssertionInvalid' on the other.
 -}
-stitch :: [Fault] -> (SigCheck -> [Fault]) -> [Checkable k] -> [SigCheck] -> [Either CryptoError [Fault]]
-stitch rejectedKey answered = go
+stitch :: [Fault] -> (SigCheck -> [Fault]) -> (k -> Bool) -> [Checkable k] -> [SigCheck] -> [SigCheck] -> [Either CryptoError [Fault]]
+stitch rejectedKey answered firstQueue = go
   where
-    go [] [] = []
-    go (KeyRejected : more) checks = Right rejectedKey : go more checks
-    go (Checkable _ : more) (c : checks) = Right (answered c) : go more checks
-    go (Checkable _ : _) [] =
-        error "EventChain.Verify: a signature batch answered fewer checks than it was given."
-    go [] (_ : _) =
-        error "EventChain.Verify: a signature batch answered more checks than it was given."
+    go [] [] [] = []
+    go (KeyRejected : more) first second = Right rejectedKey : go more first second
+    go (Checkable (k, _, _) : more) first second
+        | firstQueue k = case first of
+            c : rest -> Right (answered c) : go more rest second
+            [] -> fewer
+        | otherwise = case second of
+            c : rest -> Right (answered c) : go more first rest
+            [] -> fewer
+    go [] _ _ = error "EventChain.Verify: a signature batch answered more checks than it was given."
+    fewer = error "EventChain.Verify: a signature batch answered fewer checks than it was given."
 
 {- | What each line's Mint envelope establishes: structural findings, and the
 assertion's answer from the crypto seam. A lifecycle line contributes nothing
@@ -612,7 +658,7 @@ envelopeResults decoded = map result (zip [0 :: Int ..] decoded)
                 Map.fromList
                     ( zip
                         (map fst prepared)
-                        (stitch [AttestationFault AttesterKeyOffCurve] answered (map snd prepared) checks)
+                        (stitch [AttestationFault AttesterKeyOffCurve] answered (const False) (map snd prepared) [] checks)
                     )
       where
         answered SigValid = []

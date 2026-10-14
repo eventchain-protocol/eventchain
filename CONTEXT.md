@@ -74,7 +74,7 @@ The offline checker: chain continuity, attribution, payload commitments, and (op
 _Avoid_: validator, auditor
 
 **Precomputed key**:
-A Producer's public key together with a table of its multiples, built once per key so that each signature check is two fixed-base table walks rather than a general scalar multiplication (ADR-0004 as amended). The table is derived from a key already proven on the curve; it carries no new fact, only speed. Built where the Verifier promotes keys, kept for as long as that key's run lasts.
+A Producer's public key together with a table of its multiples, built once per key so that each signature check is two fixed-base table walks rather than a general scalar multiplication (ADR-0004 as amended). The table is derived from a key already proven on the curve; it carries no new fact, only speed. Built where the Verifier promotes keys and only where it pays — a key signing too few lines of a chunk to amortize its table verifies on libcrypto instead — and kept for as long as that key's run lasts.
 _Avoid_: cached key, key context
 
 **Checkpoint**:

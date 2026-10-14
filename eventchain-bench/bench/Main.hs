@@ -32,15 +32,18 @@ module Main (main) where
 import Control.Exception (evaluate)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder qualified as B
+import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString.Lazy.Char8 qualified as LC8
+import Data.List.NonEmpty qualified as NE
 import Data.Text qualified as T
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import EventChain (ChainedEvent (..), EventKind (..), ProducedLine (..), entryId, genesisHash, payloadRef, produce)
 import EventChain.Crypto (PrecomputedKey, PrivateKey, SigCheck, precomputeKey, privateKey, privateKeyPublic, publicKey, verifyBatchPrecomputed)
 import EventChain.Crypto.Types (LineHash, Sig, SignedBytes, lineBytesRaw, payloadHashFromBytes)
-import EventChain.Verify (Verdict (..), verify)
+import EventChain.Verify (Fault (..), Verdict (..), verify)
 import EventChain.Verify.Canonical (canonicalBytesRaw, canonicalize, signingMessage)
-import EventChain.Verify.Types (Entry (..), ProducedProof (..))
+import EventChain.Verify.Types (Entry (..), ProducedProof (..), chainPositionIndex)
 import EventChain.Verify.Wire (decodeLine, decodedEntry, decodedObject, frameFile)
 import GHC.Conc (numCapabilities)
 import Text.Printf (printf)
@@ -56,6 +59,7 @@ lineCount = 100000
 
 main :: IO ()
 main = do
+    twoLanesStitch
     let file = aof lineCount
     size <- evaluate (LBS.length file)
     printf "%d lines, %d bytes, %d capabilities\n\n" lineCount size numCapabilities
@@ -92,12 +96,67 @@ main = do
         Sound _ -> n + 1
         _ -> n
 
+{- | The fold's two signature lanes, interleaved and stitched back in order.
+
+Not timed. A chunk's lines go to the table kernel or to libcrypto by key —
+a key signing fewer lines in the chunk than a table pays for verifies on the
+general kernel — and the answers are stitched back beside their lines. The
+crypto suite proves the kernels agree; this proves the stitching puts each
+answer on the line it is about, which no one-key file can show. Two keys,
+the second every fiftieth line so each chunk holds a few of its lines under
+the break-even, and one line forged under each: the fold must blame exactly
+those two positions for their signatures, the two lines after them for the
+chain, and nothing else. A bench whose own file stitches wrongly is a broken
+bench, not a finding.
+-}
+twoLanesStitch :: IO ()
+twoLanesStitch = do
+    let forgedA = 1000 :: Int
+        forgedB = 1050 :: Int
+        file = LC8.unlines (zipWith forge [0 ..] (LC8.lines (aofWith keyFor 2000)))
+        keyFor i = if i `mod` 50 == 0 then otherKey else producerKey
+        -- Changing the id changes the canonical bytes the signature covers,
+        -- and the next line's prev_hash still names the original digest.
+        forge i ln
+            | i == forgedA || i == forgedB = LC8.fromStrict (swapId (LBS.toStrict ln))
+            | otherwise = ln
+          where
+            needle = C8.pack ("\"evt-" <> show (i + 1) <> "\"")
+            swapId bs = case BS.breakSubstring needle bs of
+                (before, rest) | not (BS.null rest) -> before <> C8.pack ("\"evt-" <> show (i + 1) <> "x\"") <> BS.drop (BS.length needle) rest
+                _ -> error ("the bench's own line " <> show i <> " does not carry its id")
+    verdicts <- either (fail . show) pure (verify file)
+    let findings = [(chainPositionIndex pos, NE.toList faults) | Unsound pos faults <- verdicts]
+        expected =
+            [ (fromIntegral forgedA, [SignatureInvalid])
+            , (fromIntegral forgedA + 1, [ChainMismatch{expected = h forgedA, claimed = h' forgedA}])
+            , (fromIntegral forgedB, [SignatureInvalid])
+            , (fromIntegral forgedB + 1, [ChainMismatch{expected = h forgedB, claimed = h' forgedB}])
+            ]
+        -- The chain fault's hashes are checked by shape here, not value: the
+        -- expected digest is of bytes this bench altered, which it does not
+        -- recompute. Compare positions and fault constructors.
+        shape = map (\(i, fs) -> (i, map constructor fs))
+        constructor = \case
+            SignatureInvalid -> "SignatureInvalid"
+            ChainMismatch{} -> "ChainMismatch"
+            other -> show other
+        h _ = genesisHash
+        h' _ = genesisHash
+    if shape findings == shape expected && length verdicts == 2000
+        then pure ()
+        else fail ("two-lane stitching misplaced an answer: " <> show (shape findings))
+
 {- | A Producer-written AOF of @n@ lifecycle Entries under one key — the shape
 of a real file, which is runs of one signer — rendered the way the Producer
 documents: each line, then @0x0a@.
 -}
 aof :: Int -> LBS.ByteString
-aof n = B.toLazyByteString (foldMap render (chain producerKey event [1 .. n]))
+aof = aofWith (const producerKey)
+
+-- | 'aof' with the signing key chosen per line, for the two-lane check.
+aofWith :: (Int -> PrivateKey) -> Int -> LBS.ByteString
+aofWith keyFor n = B.toLazyByteString (foldMap render (chainWith keyFor event [1 .. n]))
   where
     render p = B.byteString (lineBytesRaw p.line) <> B.word8 0x0a
 
@@ -122,12 +181,12 @@ aof n = B.toLazyByteString (foldMap render (chain producerKey event [1 .. n]))
 {- | Produce a chain: the first event from genesis, each one after linked to
 the line before it — the digest 'produce' handed back, never one recomputed.
 -}
-chain :: PrivateKey -> (LineHash -> a -> ChainedEvent) -> [a] -> [ProducedLine]
-chain key event = go genesisHash
+chainWith :: (Int -> PrivateKey) -> (LineHash -> a -> ChainedEvent) -> [a] -> [ProducedLine]
+chainWith keyFor event = go 0 genesisHash
   where
-    go _ [] = []
-    go prev (x : rest) = case produce key (event prev x) of
-        Right p -> p : go p.lineHash rest
+    go _ _ [] = []
+    go i prev (x : rest) = case produce (keyFor i) (event prev x) of
+        Right p -> p : go (i + 1) p.lineHash rest
         Left err -> error ("produce failed on a key libcrypto accepted: " <> show err)
 
 -- | Each line's canonical bytes, through the Verifier's own framer and decoder.
@@ -166,6 +225,12 @@ batch = verifyBatchPrecomputed
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
 chunksOf n xs = let (h, t) = splitAt n xs in h : chunksOf n t
+
+-- | A second signer for the two-lane check: any other scalar.
+otherKey :: PrivateKey
+otherKey = case privateKey (BS.pack [2 .. 33]) of
+    Right k -> k
+    Left err -> error ("a plain scalar was rejected: " <> show err)
 
 -- | RFC 6979 §A.2.5's key, the one every fixture in this repository signs with.
 producerKey :: PrivateKey
