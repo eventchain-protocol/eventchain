@@ -242,6 +242,46 @@ event and worse starvation at twelve Producers. Numbers and what they do not
 change are in
 [`docs/research/2026-10-producer-batching.md`](docs/research/2026-10-producer-batching.md).
 
+### A Hub that checks every line
+
+The Hub above compares heads and nothing else. A Hub that keeps the
+protocol's promise checks every submitted line before appending it: well
+formed, `prev_hash` equal to its head, signature valid. `cabal run
+eventchain-bench:hub-append` runs that Hub and the head-only one side by
+side in one invocation, each behind one thread, as a server would be. The
+checks are the Verifier's own fold, resumed from the Hub's Checkpoint. Before
+timing anything, the bench hands the checked Hub a stale, a forged and a
+malformed line, and the run stops unless each is refused with the fault that
+names it. Measured 2026-10-14 on mains; method and the full table are in
+[`docs/research/2026-10-hub-append-rate.md`](docs/research/2026-10-hub-append-rate.md).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/hub-append-dark.svg">
+  <img alt="Entries one Hub commits per second with nothing in flight, worst of two runs. One Producer: 29,135 comparing the head only, 11,018 with all three checks. Twelve Producers: 10,924 and 7,465. A dashed line marks 15,400, the checked Hub thread alone at 65.0 microseconds a line." src="docs/figures/hub-append-light.svg" width="720">
+</picture>
+
+- **Checking costs 2.6–2.7×.** With one Producer and nothing in flight, the
+  checked Hub commits 11,018–11,146 Entries per second; the head-only Hub
+  commits 29,135–29,729. The Producer signs (22.4 µs) and the Hub judges
+  (65.0 µs) in series, and one over their sum, 11,445, is within 4% of the
+  measurement.
+- **A line checked alone costs more than a line in a file.** The Hub thread
+  by itself judges 15,400 lines a second, 65.0 µs each, where the fold over a
+  whole file spends 13.65 µs a line at `-N1`. A one-line call pays the key
+  load, the hash call and the fold's machinery for a single line. One line is
+  also below the break-even for a key's table, so it verifies on libcrypto
+  and the fixed-base kernel does not reach this path. A Hub that kept loaded
+  keys across calls would recover the largest share; that cache belongs in
+  the Hub, not the Verifier.
+- **Racing Producers load the Hub with refusals.** At twelve Producers,
+  eleven of every twelve submissions are stale, and the Hub thread still
+  takes and answers each one. Head-only falls to 10,924–10,945 and checked to
+  7,465–7,574. A refusal costs about 5 µs here; a deployed Hub pays a
+  request's worth.
+- **Across a network hop the checks disappear.** With 20 ms in flight, every
+  cell commits 46–48 a second in both modes. A 65 µs check is a third of a
+  percent of that window.
+
 ### Against networks
 
 An AOF is not a blockchain and the Verifier is not a consensus node, so the
@@ -293,10 +333,14 @@ Three libraries share one Cabal project:
 
 Two more packages ship nothing and nothing depends on them: [`gates/`](gates/)
 grades the boundaries below, and [`eventchain-bench/`](eventchain-bench/)
-measures the Verifier end to end (`cabal run eventchain-bench:verify`, then
-with `-- +RTS -N` for every core) and what appending costs when many
-Producers race for one head (`cabal run eventchain-bench:contention`) and
-what batching buys against that (`cabal run eventchain-bench:batching`).
+holds the benchmarks behind the [Performance](#performance) section:
+
+| Command | Measures |
+| --- | --- |
+| `cabal run eventchain-bench:verify`, then with `-- +RTS -N` for every core | The Verifier end to end |
+| `cabal run eventchain-bench:contention` | What appending costs when many Producers race for one head |
+| `cabal run eventchain-bench:batching` | What signing in batches buys against that |
+| `cabal run eventchain-bench:hub-append` | What a Hub pays to check each line before appending it |
 
 **The Producer and Verifier share no format logic.** Their member
 vocabularies, canonicalizers, and codecs are implemented separately. Sharing

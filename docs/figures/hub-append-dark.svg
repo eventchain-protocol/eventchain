@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="330" viewBox="0 0 720 330" role="img">
+<rect width="720" height="330" fill="#1a1a19"/>
+<text x="24.0" y="30.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="15" fill="#f0efec" text-anchor="start" font-weight="600" >Entries one Hub commits per second, with and without checking each line</text>
+<text x="24.0" y="48.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >One thread in front of the Hub · saturating load, nothing in flight, a batch of one</text>
+<line x1="250.0" y1="82" x2="250.0" y2="248" stroke="#2c2c2a" stroke-width="1"/>
+<text x="250.0" y="264.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">0</text>
+<line x1="380.0" y1="82" x2="380.0" y2="248" stroke="#2c2c2a" stroke-width="1"/>
+<text x="380.0" y="264.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">10K</text>
+<line x1="510.0" y1="82" x2="510.0" y2="248" stroke="#2c2c2a" stroke-width="1"/>
+<text x="510.0" y="264.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">20K</text>
+<line x1="640.0" y1="82" x2="640.0" y2="248" stroke="#2c2c2a" stroke-width="1"/>
+<text x="640.0" y="264.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">30K</text>
+<line x1="250" y1="82" x2="250" y2="248" stroke="#383835" stroke-width="1"/>
+<text x="238.0" y="110.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >1 Producer · head compare only</text>
+<path d="M250.0,96.0 H624.8 a4,4 0 0 1 4,4 V112.0 a4,4 0 0 1 -4,4 H250.0 Z" fill="#3987e5"/>
+<text x="636.8" y="110.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">29,135</text>
+<text x="238.0" y="146.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >1 Producer · all three checks</text>
+<path d="M250.0,132.0 H389.2 a4,4 0 0 1 4,4 V148.0 a4,4 0 0 1 -4,4 H250.0 Z" fill="#d95926"/>
+<text x="401.2" y="146.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">11,018</text>
+<text x="238.0" y="198.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >12 Producers · head compare only</text>
+<path d="M250.0,184.0 H388.0 a4,4 0 0 1 4,4 V200.0 a4,4 0 0 1 -4,4 H250.0 Z" fill="#3987e5"/>
+<text x="400.0" y="198.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">10,924</text>
+<text x="238.0" y="234.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >12 Producers · all three checks</text>
+<path d="M250.0,220.0 H343.0 a4,4 0 0 1 4,4 V236.0 a4,4 0 0 1 -4,4 H250.0 Z" fill="#d95926"/>
+<text x="355.0" y="234.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">7,465</text>
+<line x1="450.2" y1="82" x2="450.2" y2="248" stroke="#898781" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="450.2" y="76.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">Checked Hub thread alone · 15,400</text>
+<text x="24.0" y="286.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >One Producer signs in series with the Hub; twelve load it with stale submissions it must refuse.</text>
+<text x="24.0" y="302.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >Dashed: 65.0 µs per checked line with no signer waiting. Across a 20 ms hop every cell commits 46–48.</text>
+<text x="24.0" y="318.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >docs/research/2026-10-hub-append-rate.md.</text>
+</svg>

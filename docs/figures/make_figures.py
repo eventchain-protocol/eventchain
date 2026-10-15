@@ -3,7 +3,8 @@
 
 Numbers are the ones recorded in docs/research/2026-10-fixed-base-verify.md,
 docs/research/2026-10-verifier-throughput.md,
-docs/research/2026-10-producer-contention.md and the sources cited in the
+docs/research/2026-10-producer-contention.md,
+docs/research/2026-10-hub-append-rate.md and the sources cited in the
 README's performance section; change them there first, then here. No plotting library: the figures are a few rectangles and
 circles, and a dependency would be the heavier thing to maintain.
 
@@ -75,10 +76,10 @@ FIG1 = [
 
 def figure1(t):
     W, H = 720, 298
-    left, right, top = 230, 60, 64
+    left, right, top = 230, 80, 64
     band = 40
     plot_w = W - left - right
-    vmax = 150_000
+    vmax = 300_000
     body = [
         text(24, 30, "Entries verified per second, one machine", 15, weight="600", t=t),
         text(24, 48, "100k-line AOF, ~330-byte Entries, one Producer key · 12 performance + 4 efficiency cores",
@@ -362,10 +363,65 @@ def figure5(t):
     return svg(W, H, body, t)
 
 
+# Figure 6: what checking every line before appending it costs a Hub ---------
+
+# Worst of two runs, saturating load, nothing in flight, a batch of one, one
+# thread in front of the Hub: docs/research/2026-10-hub-append-rate.md. The
+# ceiling is the calibrated checked append alone, 65.0 µs a line.
+FIG6 = [
+    ("1 Producer · head compare only", 29_135, "s1"),
+    ("1 Producer · all three checks", 11_018, "s2"),
+    ("12 Producers · head compare only", 10_924, "s1"),
+    ("12 Producers · all three checks", 7_465, "s2"),
+]
+FIG6_CEILING = 15_400
+
+
+def figure6(t):
+    W, H = 720, 330
+    left, right, top = 250, 80, 88
+    band, group_gap = 36, 16
+    plot_w = W - left - right
+    vmax = 30_000
+    rows_h = band * len(FIG6) + group_gap
+    body = [
+        text(24, 30, "Entries one Hub commits per second, with and without checking each line", 15, weight="600", t=t),
+        text(24, 48, "One thread in front of the Hub · saturating load, nothing in flight, a batch of one",
+             11, "ink2", t=t),
+    ]
+    for v in range(0, vmax + 1, 10_000):
+        x = left + plot_w * v / vmax
+        body.append(f'<line x1="{x:.1f}" y1="{top - 6}" x2="{x:.1f}" y2="{top + rows_h}" '
+                    f'stroke="{t["grid"]}" stroke-width="1"/>')
+        body.append(text(x, top + rows_h + 16, compact(v), 11, "muted", "middle", t=t,
+                         extra='font-variant-numeric="tabular-nums"'))
+    body.append(f'<line x1="{left}" y1="{top - 6}" x2="{left}" y2="{top + rows_h}" '
+                f'stroke="{t["axis"]}" stroke-width="1"/>')
+    for i, (label, v, slot) in enumerate(FIG6):
+        y = top + i * band + (group_gap if i >= 2 else 0) + (band - 20) / 2
+        w = plot_w * v / vmax
+        body.append(text(left - 12, y + 14, label, 12, "ink", "end", t=t))
+        body.append(rounded_end_bar(left, y, w, 20, t[slot]))
+        body.append(text(left + w + 8, y + 14, f"{v:,}", 12, "ink2", t=t,
+                         extra='font-variant-numeric="tabular-nums"'))
+    # the checked Hub thread's own ceiling, drawn over the bars it bounds
+    xc = left + plot_w * FIG6_CEILING / vmax
+    body.append(f'<line x1="{xc:.1f}" y1="{top - 6}" x2="{xc:.1f}" y2="{top + rows_h}" '
+                f'stroke="{t["muted"]}" stroke-width="2" stroke-dasharray="4 3"/>')
+    body.append(text(xc, top - 12, f"Checked Hub thread alone · {FIG6_CEILING:,}", 11, "muted", "middle", t=t,
+                     extra='font-variant-numeric="tabular-nums"'))
+    body.append(text(24, H - 44, "One Producer signs in series with the Hub; twelve load it with stale submissions it must refuse.",
+                     11, "muted", t=t))
+    body.append(text(24, H - 28, "Dashed: 65.0 µs per checked line with no signer waiting. Across a 20 ms hop every cell commits 46–48.",
+                     11, "muted", t=t))
+    body.append(text(24, H - 12, "docs/research/2026-10-hub-append-rate.md.", 11, "muted", t=t))
+    return svg(W, H, body, t)
+
+
 def main():
     for mode, t in MODES.items():
         for name, fn in (("verifier-throughput", figure1), ("line-cost", figure2), ("versus-networks", figure3),
-                         ("producer-contention", figure4), ("commit-ceiling", figure5)):
+                         ("producer-contention", figure4), ("commit-ceiling", figure5), ("hub-append", figure6)):
             (OUT / f"{name}-{mode}.svg").write_text(fn(t))
             print(f"wrote {name}-{mode}.svg")
 

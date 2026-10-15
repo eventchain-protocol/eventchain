@@ -4,25 +4,31 @@
 <text x="24.0" y="48.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#c3c2b7" text-anchor="start" font-weight="normal" >100k-line AOF, ~330-byte Entries, one Producer key · 12 performance + 4 efficiency cores</text>
 <line x1="230.0" y1="58" x2="230.0" y2="224" stroke="#2c2c2a" stroke-width="1"/>
 <text x="230.0" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">0</text>
-<line x1="373.3" y1="58" x2="373.3" y2="224" stroke="#2c2c2a" stroke-width="1"/>
-<text x="373.3" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">50K</text>
-<line x1="516.7" y1="58" x2="516.7" y2="224" stroke="#2c2c2a" stroke-width="1"/>
-<text x="516.7" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">100K</text>
-<line x1="660.0" y1="58" x2="660.0" y2="224" stroke="#2c2c2a" stroke-width="1"/>
-<text x="660.0" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">150K</text>
+<line x1="298.3" y1="58" x2="298.3" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="298.3" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">50K</text>
+<line x1="366.7" y1="58" x2="366.7" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="366.7" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">100K</text>
+<line x1="435.0" y1="58" x2="435.0" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="435.0" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">150K</text>
+<line x1="503.3" y1="58" x2="503.3" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="503.3" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">200K</text>
+<line x1="571.7" y1="58" x2="571.7" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="571.7" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">250K</text>
+<line x1="640.0" y1="58" x2="640.0" y2="224" stroke="#2c2c2a" stroke-width="1"/>
+<text x="640.0" y="240.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="middle" font-weight="normal" font-variant-numeric="tabular-nums">300K</text>
 <line x1="230" y1="58" x2="230" y2="224" stroke="#383835" stroke-width="1"/>
 <text x="218.0" y="88.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >Signature kernel alone, 1 thread</text>
-<path d="M230.0,74.0 H353.3 a4,4 0 0 1 4,4 V90.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
-<text x="365.3" y="88.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">44,400</text>
+<path d="M230.0,74.0 H286.7 a4,4 0 0 1 4,4 V90.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
+<text x="298.7" y="88.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">44,400</text>
 <text x="218.0" y="128.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >Fan-out, 1 capability</text>
-<path d="M230.0,114.0 H436.1 a4,4 0 0 1 4,4 V130.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
-<text x="448.1" y="128.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">73,300</text>
+<path d="M230.0,114.0 H326.2 a4,4 0 0 1 4,4 V130.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
+<text x="338.2" y="128.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">73,300</text>
 <text x="218.0" y="168.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >Fan-out, 12 capabilities</text>
-<path d="M230.0,154.0 H1066.2 a4,4 0 0 1 4,4 V170.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
-<text x="1078.2" y="168.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">293,100</text>
+<path d="M230.0,154.0 H626.6 a4,4 0 0 1 4,4 V170.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
+<text x="638.6" y="168.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">293,100</text>
 <text x="218.0" y="208.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#f0efec" text-anchor="end" font-weight="normal" >Fan-out, 16 capabilities</text>
-<path d="M230.0,194.0 H1070.5 a4,4 0 0 1 4,4 V210.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
-<text x="1082.5" y="208.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">294,600</text>
+<path d="M230.0,194.0 H628.6 a4,4 0 0 1 4,4 V210.0 a4,4 0 0 1 -4,4 H230.0 Z" fill="#3987e5"/>
+<text x="640.6" y="208.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-variant-numeric="tabular-nums">294,600</text>
 <text x="24.0" y="270.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >Bars: lines/s, every verdict forced; the first is the sequential reference, a fold with no sparks.</text>
 <text x="24.0" y="286.0" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' font-size="11" fill="#898781" text-anchor="start" font-weight="normal" >Capabilities are GHC's -N, not cores; see docs/research/2026-10-verifier-throughput.md.</text>
 </svg>

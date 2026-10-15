@@ -21,7 +21,9 @@ Read these first, in order:
    compare-and-swap model, and why "one signature per event" is a regime
    rather than a constant; `2026-10-producer-batching.md` for what signing
    events in batches buys against that ceiling, where it buys nothing, and
-   what it costs; `2026-10-fixed-base-verify.md` for the s2n-bignum
+   what it costs; `2026-10-hub-append-rate.md` for what a Hub pays to run the
+   Verifier's three checks on each line before appending it, and why a line
+   checked alone costs more than a line in a file; `2026-10-fixed-base-verify.md` for the s2n-bignum
    verification kernel — the C spike that justified amending ADR-0004, the
    table geometry, the hand-written walk measured and declined, and the
    same-session before/after of the Verifier. Read the relevant one before reopening a decision it
