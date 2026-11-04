@@ -1,9 +1,9 @@
 # Chain bytes: canonicalization vs exact bytes
 
 Evidence behind ADR-0002 §1 — why `prev_hash` covers the previous line's
-exact bytes rather than `SHA256(JCS(previous entry))`. Gathered 2026-07-17,
-when the paper's wording ("SHA-256 of previous entry", which denotes a *value*
-where SHA-256 needs *octets*) put the choice back in question.
+exact bytes rather than `SHA256(JCS(previous entry))`. Gathered 2026-07-17
+to settle whether the chain identifies exact line bytes or a canonical
+serialization.
 
 **Outcome: ADR-0002 §1 stands unchanged; the spec has since been amended to
 say bytes.**

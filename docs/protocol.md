@@ -5,11 +5,10 @@ Condensed from the specification at <https://eventchain-protocol.github.io/>
 contract the implementation targets; the
 website remains the source of truth.
 
-Where implementing it showed the text cannot be implemented as written —
-`entry.data()` undefined, `prev_hash` not saying how an entry becomes bytes,
-field encodings existing only as examples — the gap is filled for our purposes by
-ADR-0002. Read that ADR before concluding the paper settles a byte-level
-question.
+Where implementing it exposed byte-level gaps in the original text —
+`entry.data()` undefined and field encodings existing only as examples — the
+gap was filled for our purposes by ADR-0002. The current paper now specifies
+those rules and the exact bytes covered by `prev_hash`.
 
 ## Append-only file (AOF)
 
@@ -24,7 +23,7 @@ Every entry carries the same structure:
 | `entry_id`     | Unique identifier (e.g. `evt-042`)                   |
 | `payload_hash` | SHA-256 of the payload content                       |
 | `payload_ref`  | Index key into external (Hub) payload storage        |
-| `prev_hash`    | SHA-256 of the previous entry                        |
+| `prev_hash`    | SHA-256 of the previous line's exact bytes         |
 | `public_key`   | Signer's public key                                  |
 | `signature`    | ECDSA-P256 signature over the entry data             |
 

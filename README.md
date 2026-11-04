@@ -12,8 +12,12 @@ contacting the system that supplied it.
 
 ## What works today
 
-This is an early, library-only implementation of the EventChain protocol
-with a two-level proof addendum. There is no CLI, web UI, or hosted service.
+This repository contains three implemented Haskell libraries: a **Producer**
+that signs Entries into AOF lines, an independent **Verifier** that checks AOF
+bytes offline, and a shared **crypto** package for SHA-256 and ECDSA-P256.
+There is no CLI or web UI here. The **Reference Hub** lives in the separate,
+public [`eventchain-protocol/hub`](https://github.com/eventchain-protocol/hub)
+repository and is a work in progress.
 
 - **Produce:** turn a `ChainedEvent` and a signing key into a signed AOF line
   and its hash. The caller owns file IO.
@@ -22,6 +26,21 @@ with a two-level proof addendum. There is no CLI, web UI, or hosted service.
   duplicate members, unknown members, and unsupported Revisions.
 - **Derive Minted status:** match valid Mint Entries to earlier verified
   targets in a separate pass.
+
+Status against the paper, limited to behavior covered by the current tests:
+
+| Paper rule | Status | Evidence and boundary |
+| --- | --- | --- |
+| JSON Lines framing and malformed rejection | **Partial** | [Wire tests](eventchain-verify/tests/Test/EventChain/Verify/Wire.hs) cover BOM, terminator, non-object and trailing-content rejection. The implementation accepts an unterminated final line and treats `0x0d` as content; the appendix currently requires LF and rejects CR. |
+| Base-member encodings; duplicate, unknown and missing members | **Enforced** | [Producer wire tests](eventchain/tests/Test/EventChain/Wire.hs) and [Verifier wire tests](eventchain-verify/tests/Test/EventChain/Wire.hs) cover the vocabulary, unpadded base64url, string values and rejection cases. |
+| `prev_hash` over exact previous-line bytes; zero genesis | **Enforced** | [Producer tests](eventchain/tests/Test/EventChain/Produce.hs) recompute line hashes; [Verifier fold tests](eventchain-verify/tests/Test/EventChain/Verify/Fold.hs) cover genesis, continuity and corruption. |
+| JCS of the Entry without `signature`; ECDSA-P256 | **Enforced** | Independent canonicalizers pass oracle tests; Producer signatures are checked with OpenSSL; crypto tests use RFC 6979 known answers and negative signature cases. |
+| Revision-1 Mint envelope and WebAuthn checks | **Partial** | [Mint tests](eventchain-verify/tests/Test/EventChain/Verify/Mint.hs) cover sound envelopes, flags, challenge binding and tampering. Origin, RP ID, user verification and counter policy remain application responsibilities, as the paper specifies. |
+| Earlier verified Mint targets and Minted status | **Partial** | The separate `mintedStatus` pass credits an earlier Sound target and reports orphans. `verify` alone can return `Sound` for an orphan Mint. |
+| Salted Payload commitment verification | **Not yet** | SHA-256 is implemented, but there is no integrated salt-and-Payload verification API. |
+| Registries and named attribution | **Not yet** | Signature validity does not establish identity, role or authority. |
+| Heartbeat freshness and shared-history checks | **Not yet** | Checkpoints resume integrity checks; they do not authenticate published history or freshness. |
+| OpenTimestamps | **Not yet** | No OTS proof or coverage validation. |
 
 **Not yet implemented:** integrated Payload-commitment verification and the
 standalone wire-format document. OpenTimestamps Anchor verification,
@@ -125,9 +144,9 @@ it is not a complete WebAuthn relying-party ceremony or an identity-directory
 check. See the [exact checks and exclusions](docs/adr/0007-mint-envelope-verification.md).
 An AOF alone also cannot prove that no later Entries were withheld.
 
-The addendum and byte-level decisions are this implementation's explicit
-extensions and clarifications, not claims that the upstream paper specifies
-every detail.
+The architecture decisions record the implementation's byte-level choices and
+verification boundaries. The status table above separates implemented checks
+from paper rules that remain outside these libraries.
 
 ## Performance
 
@@ -335,12 +354,12 @@ Two more packages ship nothing and nothing depends on them: [`gates/`](gates/)
 grades the boundaries below, and [`eventchain-bench/`](eventchain-bench/)
 holds the benchmarks behind the [Performance](#performance) section:
 
-| Command | Measures |
-| --- | --- |
-| `cabal run eventchain-bench:verify`, then with `-- +RTS -N` for every core | The Verifier end to end |
-| `cabal run eventchain-bench:contention` | What appending costs when many Producers race for one head |
-| `cabal run eventchain-bench:batching` | What signing in batches buys against that |
-| `cabal run eventchain-bench:hub-append` | What a Hub pays to check each line before appending it |
+| Command | Measures | Script and recorded output |
+| --- | --- | --- |
+| `cabal run eventchain-bench:verify`, then with `-- +RTS -N` for every core | The Verifier end to end | [Script](eventchain-bench/bench/Main.hs); [throughput runs](docs/research/2026-10-verifier-throughput.md) and [same-session kernel comparison](docs/research/2026-10-fixed-base-verify.md) |
+| `cabal run eventchain-bench:contention` | What appending costs when many Producers race for one head | [Script](eventchain-bench/bench/contention/Main.hs); [raw runs](docs/research/2026-10-producer-contention.md) |
+| `cabal run eventchain-bench:batching` | What signing in batches buys against that | [Script](eventchain-bench/bench/contention/Batching.hs); [raw runs](docs/research/2026-10-producer-batching.md) |
+| `cabal run eventchain-bench:hub-append` | What a Hub pays to check each line before appending it | [Script](eventchain-bench/bench/contention/HubAppend.hs); [raw runs](docs/research/2026-10-hub-append-rate.md) |
 
 **The Producer and Verifier share no format logic.** Their member
 vocabularies, canonicalizers, and codecs are implemented separately. Sharing
@@ -361,6 +380,8 @@ that grows with the number of Entries.
   Produced Proof, Mint, and other domain terms.
 - **[Architecture decisions](docs/adr/)** — byte-level rules, package
   independence, Revisions, and Mint verification.
+- **[Paper amendments](docs/paper-amendments.md)** — amendment status against
+  the current paper.
 - **[Vectors](vectors/)** — committed AOFs consumed by the Verifier and
   checked against the Producer's output.
 - **[Implementation plan](docs/plan.md)** — package contracts, milestones,

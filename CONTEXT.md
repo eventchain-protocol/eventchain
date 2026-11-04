@@ -1,6 +1,6 @@
 # EventChain
 
-Open protocol layer for zero-trust provenance: an append-only file of
+Open protocol layer for trust-minimized provenance: an append-only file of
 hash-chained, identity-signed events that verifies offline. This repo
 implements the proof artifact and its verification, not what is built on it:
 the applications whose Producers decide which lifecycle actions become

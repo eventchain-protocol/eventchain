@@ -2,7 +2,7 @@ cabal-version:      3.14
 name:               eventchain
 version:            0.1.0.0
 synopsis:
-    Zero-trust provenance: produce hash-chained append-only event files
+    Trust-minimized provenance: produce hash-chained append-only event files
 description:
     The Producer for the EventChain protocol: an append-only JSON-Lines file
     (the AOF) of hash-chained, identity-signed Entries that any holder can

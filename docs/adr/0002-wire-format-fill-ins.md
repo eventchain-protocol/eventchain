@@ -1,13 +1,12 @@
-# Byte-level wire-format decisions the paper leaves undefined
+# Byte-level wire-format decisions
 
-The EventChain paper defines structure (fields) and algorithms (SHA-256,
-ECDSA-P256) but no byte-level rules — `entry.data()` is never defined, nor
-what bytes `prev_hash` covers, nor any encodings. Interoperable,
-deterministic verification is impossible without fixing these, so this
-implementation defines them and publishes them as the normative
-`docs/wire-format.md` plus golden test vectors.
+The original EventChain paper defined structure (fields) and algorithms
+(SHA-256, ECDSA-P256) but left `entry.data()`, the bytes covered by
+`prev_hash`, and the encodings undefined. The current specification defines
+those rules. This ADR records the implementation's decisions and the evidence
+behind them, with golden test vectors demonstrating the resulting format.
 
-**Scope.** This ADR fills the gaps the *paper* leaves. Two specifications
+**Scope.** This ADR filled gaps in the paper's original text. Two specifications
 already govern territory inside those gaps and reach the wire format by
 citation: [JSON Lines](https://jsonlines.org/) defines file framing — what a
 line is and where it ends — and RFC 8785 defines canonicalization. Where they
@@ -23,10 +22,8 @@ Decisions:
    content bytes and is hashed with them. No canonicalization — any
    re-serialization of a proof artifact breaks the chain by design.
 
-   This is a *departure* from the paper's "SHA-256 of previous entry", which
-   names a value where the rule hashes a line; the paper's wording was wrong
-   and the spec has since been corrected. Evidence for
-   preferring bytes over `SHA256(JCS(entry))`:
+   The paper's Table 4.1 and specification appendix now state this same
+   exact-bytes rule. Evidence for preferring bytes over `SHA256(JCS(entry))`:
    `docs/research/2026-07-canonicalization-vs-exact-bytes.md` — every surveyed
    system canonicalizing before a hash did so for a functional requirement
    (dedup, encoding-independence, information model) that we do not have, and
