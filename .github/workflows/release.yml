@@ -1,0 +1,100 @@
+# Release binaries of eventchain-verify. A pull request that touches the
+# release build builds every binary and checks it; a v* tag builds them and
+# publishes them, with their SHA-256 sums, as the tag's GitHub release.
+#
+# Each binary is built on its own architecture, natively, and each build
+# checks its binary before handing it over: no libraries beyond the OS's, and
+# the lifecycle vector verifies (release/linux.Dockerfile, release/macos.sh).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - release/**
+      - .github/workflows/release.yml
+      - .dockerignore
+  workflow_dispatch:
+
+jobs:
+  linux:
+    strategy:
+      # One architecture failing says nothing about the other; let both report.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build a static binary
+        run: docker buildx build -f release/linux.Dockerfile --progress plain --output type=local,dest=out .
+      - run: mv out/eventchain-verify eventchain-verify-linux-${{ matrix.arch }} && mv out/openssl-version openssl-linux-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eventchain-verify-linux-${{ matrix.arch }}
+          path: |
+            eventchain-verify-linux-${{ matrix.arch }}
+            openssl-linux-${{ matrix.arch }}.txt
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.12.4"
+          cabal-version: "3.16.1.0"
+      - run: brew install openssl@3 pkgconf
+      - run: cabal update
+      - name: Build with libcrypto linked in
+        run: release/macos.sh out
+      - run: mv out/eventchain-verify eventchain-verify-macos-aarch64 && mv out/openssl-version openssl-macos-aarch64.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eventchain-verify-macos-aarch64
+          path: |
+            eventchain-verify-macos-aarch64
+            openssl-macos-aarch64.txt
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum eventchain-verify-* > SHA256SUMS && cat SHA256SUMS
+      - name: Name the libcrypto each binary links
+        working-directory: dist
+        run: |
+          {
+            echo "libcrypto linked into each binary:"
+            echo
+            for f in openssl-*.txt; do
+              plat=${f#openssl-}; plat=${plat%.txt}
+              echo "- \`eventchain-verify-$plat\`: OpenSSL $(cat "$f")"
+            done
+          } > ../notes.md
+          rm openssl-*.txt
+          cat ../notes.md
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes dist/*
