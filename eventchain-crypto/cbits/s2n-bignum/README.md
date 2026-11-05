@@ -29,4 +29,5 @@ To refresh: check out the upstream commit, copy the files named above from
 and `NOTICE`, and update the commit hash above. The `_alt` twins are tuned
 for other microarchitectures and are not used; x86-64 twins live under
 upstream's `x86/` and are not vendored until a build has run there
-(`tested-with` lists what is built).
+(`tested-with` lists what is built). Other architectures build without this
+directory and verify on libcrypto (ADR-0004, amendment of 2026-11-05).

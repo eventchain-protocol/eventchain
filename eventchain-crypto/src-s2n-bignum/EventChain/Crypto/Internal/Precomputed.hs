@@ -1,5 +1,10 @@
 {- | ECDSA-P256 verification from a precomputed key: the fixed-base kernel.
 
+This is the arm64 build's module, where s2n-bignum is vendored. Every other
+architecture builds a twin with the same exports that has no table at all, so
+'precomputeKey' answers 'Nothing' there and the Verifier verifies on libcrypto
+(ADR-0004 as amended on 2026-11-05).
+
 An AOF is runs of one Producer's key, so the Verifier checks thousands of
 signatures against a point it has already seen. @EVP_PKEY_verify@ cannot use
 that: each call is a general scalar multiplication of the key. A table of the
@@ -131,13 +136,21 @@ jacobian = 96
 
 {- | Build the table for a key. ~500 µs of curve arithmetic in C; see the bench
 for what the same loop costs from here.
+
+Always 'Just' in this build. The 'Maybe' is the other architectures': there
+is no table kernel there, and the type says so rather than a runtime error.
+The table itself is lazy behind the 'Just', so asking whether one exists
+builds nothing.
 -}
-precomputeKey :: PublicKey -> PrecomputedKey
-precomputeKey key = unsafePerformIO $ do
+precomputeKey :: PublicKey -> Maybe PrecomputedKey
+precomputeKey key = Just (tabulate key)
+
+tabulate :: PublicKey -> PrecomputedKey
+tabulate key = unsafePerformIO $ do
     let (x, y) = publicKeyPoint key
     tab <- buildTable x y
     pure (PrecomputedKey tab key)
-{-# NOINLINE precomputeKey #-}
+{-# NOINLINE tabulate #-}
 
 -- | The generator's table, built on first use and shared by every verify.
 generatorTable :: ForeignPtr Word64

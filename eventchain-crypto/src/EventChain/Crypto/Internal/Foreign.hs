@@ -1,5 +1,10 @@
 -- This file is long because it is the single FFI seam: every foreign import in the system lives here by rule (ADR-0004), one block per libcrypto and s2n-bignum entry point, each carrying the C contract it relies on.
 {-# LANGUAGE CApiFFI #-}
+{-# LANGUAGE CPP #-}
+
+-- The header carries CPP (the s2n-bignum exports exist on arm64 only), which
+-- fourmolu cannot parse inside an export list; it is formatted by hand.
+{- FOURMOLU_DISABLE -}
 
 {- | The language seam: every line of libcrypto we speak to, and nothing else.
 
@@ -115,6 +120,7 @@ module EventChain.Crypto.Internal.Foreign
     , c_ERR_get_error
     , c_ERR_clear_error
 
+#if defined(aarch64_HOST_ARCH)
       -- * s2n-bignum: the fixed-base P-256 kernel
     , c_p256_scalarmulbase
     , c_p256_montjmixadd
@@ -132,18 +138,24 @@ module EventChain.Crypto.Internal.Foreign
     , c_bignum_nonzero_4
     , c_bignum_eq
     , c_bignum_lt
+#endif
 
       -- * Selection constants
     , evpPkeyPublicKey
     , evpPkeyKeypair
     ) where
 
+#if defined(aarch64_HOST_ARCH)
 import Data.Word (Word64, Word8)
+#else
+import Data.Word (Word8)
+#endif
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..), CLong (..), CSize (..), CUInt (..), CULong (..))
 import Foreign.ForeignPtr (FinalizerPtr)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (Storable)
+{- FOURMOLU_ENABLE -}
 
 -- | @EVP_MD@ — a fetched digest algorithm. Immutable, and shareable once fetched.
 data {-# CTYPE "openssl/evp.h" "EVP_MD" #-} EVP_MD
@@ -509,7 +521,11 @@ foreign import capi unsafe "openssl/bn.h BN_bn2binpad"
 
 -- s2n-bignum ------------------------------------------------------------------
 
+#if defined(aarch64_HOST_ARCH)
 {- $s2n
+Built on arm64 only, where the assembly is vendored. Elsewhere this section
+is absent and there is no table kernel (ADR-0004 as amended on 2026-11-05).
+
 The fixed-base ECDSA-P256 verification kernel (ADR-0004 as amended) runs on
 vendored s2n-bignum assembly, each function a formally verified leaf: no
 allocation, no state, no error path, fixed-size arrays in and out. The C
@@ -587,3 +603,4 @@ foreign import capi unsafe "eventchain-s2n-bignum.h bignum_eq"
 -- | @x < y@, likewise.
 foreign import capi unsafe "eventchain-s2n-bignum.h bignum_lt"
     c_bignum_lt :: Word64 -> Ptr Word64 -> Word64 -> Ptr Word64 -> IO Word64
+#endif

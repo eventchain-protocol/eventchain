@@ -91,19 +91,20 @@ library
     -- point at it (see the README).
     pkgconfig-depends:  libcrypto >=3.2
 
-    -- ADR-0004 as amended: ECDSA-P256 verification runs on vendored s2n-bignum
-    -- assembly (fixed-base scalar multiplication from a per-key table), which
-    -- is where the 2x over libcrypto's verify comes from. The sources are
-    -- byte-for-byte upstream copies -- see cbits/s2n-bignum/README.md for the
-    -- commit and the refresh procedure. arm64 only until a build has run
-    -- elsewhere: the x86-64 twins are a separate vendoring under the other
-    -- arch branch, and `tested-with` lists what is built, not what is hoped.
-    if !arch(aarch64)
-        -- Refused rather than linked without the kernel: the FFI seam names
-        -- these symbols, so a build here would fail at link time of the first
-        -- test suite with a message about them, and this says why first.
-        buildable: False
+    -- ADR-0004 as amended: on arm64, ECDSA-P256 verification runs on vendored
+    -- s2n-bignum assembly (fixed-base scalar multiplication from a per-key
+    -- table), which is where the 2x over libcrypto's verify comes from. The
+    -- sources are byte-for-byte upstream copies -- see
+    -- cbits/s2n-bignum/README.md for the commit and the refresh procedure.
+    --
+    -- Every other architecture builds without it, and verifies on libcrypto:
+    -- src-without-s2n-bignum/ has the same table module with no tables in it,
+    -- so `precomputeKey` answers Nothing and the Verifier takes the general
+    -- verify it already uses for keys too short-lived to tabulate. x86-64's
+    -- s2n-bignum kernel needs BMI2 and ADX, and is vendored only if a
+    -- measurement there shows it beating OpenSSL's own x86-64 P-256 code.
     if arch(aarch64)
+        hs-source-dirs: src-s2n-bignum
         include-dirs:   cbits cbits/s2n-bignum/include
         asm-sources:
             cbits/s2n-bignum/arm/bignum_bigendian_4.S
@@ -122,6 +123,8 @@ library
             cbits/s2n-bignum/arm/p256_montjdouble.S
             cbits/s2n-bignum/arm/p256_montjmixadd.S
             cbits/s2n-bignum/arm/p256_scalarmulbase.S
+    else
+        hs-source-dirs: src-without-s2n-bignum
 
 -- The kernels are graded by bytes we did not choose. `docs/plan.md` asked for
 -- OpenSSL CLI fixtures; those are the same libcrypto we call, so they prove

@@ -19,9 +19,11 @@ module Test.EventChain.Crypto.Kat
 
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as C8
+import Data.Maybe (isJust)
 import EventChain.Crypto
 import EventChain.Crypto.Types
 import Hedgehog (property, withTests, (===))
+import System.Info (arch)
 import Test.EventChain.Crypto.Hex (hex, unhex)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
@@ -93,13 +95,19 @@ rfc6979Kats =
             s2 = expect (sign key (signedBytes "test"))
         verifyBatch [(pub, signedBytes "sample", s1), (pub, signedBytes "test", s2)]
             === Right [SigValid, SigValid]
-    , testProperty "every RFC signature verifies through the precomputed key" . withTests 1 . property $ do
-        let pub = precomputeKey (expect (publicKey (privateKeyPublic key)))
-            s1 = expect (sign key (signedBytes "sample"))
-            s2 = expect (sign key (signedBytes "test"))
-        verifyBatchPrecomputed [(pub, signedBytes "sample", s1), (pub, signedBytes "test", s2)]
-            === [SigValid, SigValid]
+    , -- The table kernel is vendored for arm64 only (ADR-0004 as amended). This
+      -- is what keeps the test below from passing by being left out: a build
+      -- that lost its table on arm64, or grew one elsewhere, fails here.
+      testCase "a table kernel exists exactly where s2n-bignum is vendored (arm64)" $
+        isJust (precomputeKey rfcPublic) @?= (arch == "aarch64")
     ]
+        <> [ testProperty "every RFC signature verifies through the precomputed key" . withTests 1 . property $ do
+                let s1 = expect (sign key (signedBytes "sample"))
+                    s2 = expect (sign key (signedBytes "test"))
+                verifyBatchPrecomputed [(pub, signedBytes "sample", s1), (pub, signedBytes "test", s2)]
+                    === [SigValid, SigValid]
+           | Just pub <- [precomputeKey rfcPublic]
+           ]
   where
     signature message r s =
         testCase (show (C8.unpack message)) $
@@ -107,7 +115,12 @@ rfc6979Kats =
                 Left err -> assertFailure ("sign failed: " <> show err)
                 Right sig -> hex (sigRaw sig) @?= r <> s
 
--- | RFC 6979 A.2.5's private key @x@.
+{- | RFC 6979 A.2.5's private key @x@.
+| The RFC key's public half, promoted.
+-}
+rfcPublic :: PublicKey
+rfcPublic = expect (publicKey (privateKeyPublic key))
+
 key :: PrivateKey
 key = case privateKey (unhex "C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721") of
     Right k -> k

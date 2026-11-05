@@ -34,7 +34,9 @@ capability for the microseconds it runs, and the runtime spends that time on
 the next chunk's spark, so even @-N1@ overlaps the kernel with the work around
 it (measured: @docs/research/2026-10-verifier-throughput.md@).
 
-/Attribution runs on a precomputed key./ A chunk promotes each distinct key
+/Attribution runs on a precomputed key/, on arm64, the one architecture with
+the table kernel; every other build verifies each signature on libcrypto
+(ADR-0004 as amended). On arm64, a chunk promotes each distinct key
 once and builds the table of its multiples with it (ADR-0004 as amended), so
 each signature is two fixed-base table walks rather than a general scalar
 multiplication. The table is a function of a key already proven on the curve;
@@ -363,7 +365,7 @@ fold prev lns = untilHalt (map (\(p, s, c) -> chunkVerdicts p s c) staged `using
     seed inherited = \case
         Just c
             | Map.member c inherited -> inherited
-            | otherwise -> Map.singleton c (Precomputed . precomputeKey <$> publicKey c)
+            | otherwise -> Map.singleton c (tabulated <$> publicKey c)
         Nothing -> Map.empty
 
     untilHalt [] = []
@@ -503,7 +505,7 @@ attributionResults inherited decoded = case traverse (prepare promoted) decoded 
     -- time a line needs it.
     promoted = Map.fromList [(c, Map.findWithDefault (kernelFor c) c inherited) | d <- decoded, let c = claimOf d]
     kernelFor c
-        | Map.findWithDefault 0 c linesUnder >= tableBreakEven = Precomputed . precomputeKey <$> publicKey c
+        | Map.findWithDefault 0 c linesUnder >= tableBreakEven = tabulated <$> publicKey c
         | otherwise = General <$> publicKey c
     linesUnder = Map.fromListWith (+) [(claimOf d, 1 :: Int) | d <- decoded]
     claimOf d = (decodedEntry d).producedProof.publicKey
@@ -516,6 +518,12 @@ the choice is cost alone.
 data Kernel
     = Precomputed PrecomputedKey
     | General PublicKey
+
+{- | The table kernel for a key, where this build has one: arm64 does, and
+every other architecture verifies on libcrypto (ADR-0004 as amended).
+-}
+tabulated :: PublicKey -> Kernel
+tabulated key = maybe (General key) Precomputed (precomputeKey key)
 
 -- | Promotions by claim: the chunk's own, or the one it inherited from the spine.
 type Promoted = Map ClaimedKey (Either CryptoError Kernel)

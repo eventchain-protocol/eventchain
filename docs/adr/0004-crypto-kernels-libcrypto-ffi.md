@@ -98,7 +98,8 @@ file as measured and rejected.
 **What is vendored.** Exactly the sixteen functions the kernel calls (the
 list and the refresh procedure are in `cbits/s2n-bignum/README.md`), arm64
 only, behind `if arch(aarch64)`. The x86-64 twins are a separate vendoring,
-claimed only once a build has run there.
+claimed only once a build has run there. (Amended 2026-11-05, below: other
+architectures now build, and verify on libcrypto.)
 
 **Consequences, in addition to the list above.**
 
@@ -116,3 +117,37 @@ claimed only once a build has run there.
   offers it a scalar multiplication.
 - `eventchain-crypto` is no longer wholly BSD-3-Clause: the vendored directory
   carries its own `LICENSE` and `NOTICE`.
+
+## Amendment, 2026-11-05: other architectures verify on libcrypto
+
+**Decision.** The s2n-bignum kernel stays arm64-only. Every other
+architecture builds the crypto package without it and verifies every
+signature on libcrypto. Until now the package refused to build anywhere but
+arm64, which kept the Verifier, the Hub's acceptor and the amd64 Docker image
+off x86-64 altogether.
+
+**Why not vendor the x86-64 twins.** Upstream ships each function twice for
+x86-64. The default form uses `MULX`, `ADCX` and `ADOX`, which need the BMI2
+and ADX extensions (Intel since Broadwell, AMD since Zen). On a CPU without
+them the process dies with an illegal-instruction signal partway through a
+verification. The `_alt` form runs on every x86-64 CPU and is slower by an
+amount nobody has measured. Either one would be bought without a measurement.
+The arm64 kernel earned its place by beating libcrypto 2.25× on that machine.
+OpenSSL's own x86-64 P-256 code is hand-written assembly that already selects
+its ADX path itself, so the gap there may be small or absent.
+
+**How.** `src-s2n-bignum/` (arm64) and `src-without-s2n-bignum/` (everything
+else) each hold `EventChain.Crypto.Internal.Precomputed`, with the same
+exports. `precomputeKey :: PublicKey -> Maybe PrecomputedKey` answers
+`Nothing` in the second build, where `PrecomputedKey` has no values at all, so
+no table can be reached and no runtime check is needed. The FFI module keeps
+every foreign import, with the s2n-bignum block behind one CPP architecture
+guard. The Verifier treats `Nothing` the way it already treats a key below
+`tableBreakEven`: it verifies that key on libcrypto. The KAT suite asserts
+that a table kernel exists exactly on arm64.
+
+**What reopens it.** A run of `cabal run eventchain-bench:verify` on an
+x86-64 machine that shows the table walk beating OpenSSL's verify by enough
+to matter. Then the default x86-64 form gets vendored, with a startup CPU
+check that refuses to run without BMI2 and ADX, rather than crashing mid-file.
+
