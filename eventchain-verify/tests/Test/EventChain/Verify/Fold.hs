@@ -3,7 +3,7 @@
 {- | M3's gate: an AOF written by a Producer this package has never seen
 verifies, and a corrupted one fails at the line that was corrupted.
 
-The file at @vectors/v0-lifecycle.jsonl@ is the whole of what crosses the wall.
+The file at @conformance/vectors/v0-lifecycle.jsonl@ is the whole of what crosses the wall.
 @eventchain-verify@ may not depend on @eventchain@ — @gates:verifier-independence@
 walks the resolved install plan and seeds on every unit of this package, this
 test suite included — so nothing here can ask the Producer for an AOF, import
@@ -218,7 +218,7 @@ soundAt verdicts n =
 vectorBytes :: IO LBS.ByteString
 vectorBytes = do
     root <- findRepoRoot
-    let path = root </> "vectors" </> "v0-lifecycle.jsonl"
+    let path = root </> "conformance" </> "vectors" </> "v0-lifecycle.jsonl"
     exists <- doesFileExist path
     if exists
         then LBS.readFile path
@@ -229,6 +229,9 @@ vectorBytes = do
                 , "It is committed rather than generated here: this package cannot build one,"
                 , "because building one means the Producer, and the Producer is the thing this"
                 , "file is evidence about."
+                , ""
+                , "It lives in the conformance submodule. If that directory is empty,"
+                , "run `git submodule update --init`."
                 ]
 
 -- | The vector's verdicts.

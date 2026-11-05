@@ -429,8 +429,9 @@ mint challenge mismatch) — which double as the cross-implementation
 interop suite; (b) parametrized tests for the pure branching cores only:
 codec round-trip, JCS output, verifier fold verdicts.
 
-The vectors live at the top of the repo, in `vectors/`, and both sides face
-them: `eventchain` generates, `eventchain-verify` adjudicates. Because neither
+The vectors live in the conformance repository, mounted at the top of the repo
+as the `conformance` submodule, in `conformance/vectors/` (ADR-0008), and both
+sides face them: `eventchain` generates, `eventchain-verify` adjudicates. Because neither
 imports the other, "the Producer's output verifies" is a claim about the *format*
 rather than about a shared function, and a disagreement is a real finding rather
 than a broken build. The two JCS implementations are the sharpest case — if they
@@ -577,7 +578,7 @@ can grade the Producer without our Verifier existing.
    **The vector arrives here, not at M5.** M3's proof needs an AOF that
    `eventchain-verify` did not build, and `gates:verifier-independence` seeds on
    every unit of that package — test suites included — so the Verifier's tests
-   cannot call the Producer for one. `vectors/v0-lifecycle.jsonl` is committed and
+   cannot call the Producer for one. `conformance/vectors/v0-lifecycle.jsonl` is committed and
    both sides face it: `eventchain`'s suite rebuilds it from fixed events and
    asserts the committed bytes are still what it emits (RFC 6979 makes signing
    deterministic, so there is nothing to seed), and `eventchain-verify`'s suite
@@ -595,7 +596,7 @@ can grade the Producer without our Verifier existing.
    ADR-0007 makes the envelope members normative, fixes the RP-free check
    set, and supersedes the tweag-`webauthn` library delegation in favour of
    a hand-written check the package grades from a test suite. The mint
-   vectors extend `vectors/` by the M3 pattern — `eventchain`'s suite
+   vectors extend `conformance/vectors/` by the M3 pattern — `eventchain`'s suite
    fabricates deterministically, the Verifier's suite adjudicates the
    committed file, and the fabricated envelopes face the oracle too.
 
@@ -634,7 +635,7 @@ can grade the Producer without our Verifier existing.
      credited "python-fido2's software authenticator"; python-fido2 ships
      none, and the correction is the `soft-webauthn` package's
      `SoftWebauthnDevice`, built on python-fido2's primitives. Its envelope
-     is committed as a fixture (`vectors/mint/cross/`), wrapped
+     is committed as a fixture (`conformance/vectors/mint/cross/`), wrapped
      deterministically into `cross-soft-webauthn.jsonl`, and adjudicated
      Sound — two implementations of the authenticator's construction,
      sharing no language, agreeing.

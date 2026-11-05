@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | The Mint vectors: fabricated envelopes, frozen as bytes under
-@vectors/mint/@, one file per case.
+@conformance/vectors/mint/@, one file per case.
 
 This module plays two parts the library refuses to. It is the /browser/,
 writing @clientDataJSON@ bytes and assembling authenticator data — the
@@ -13,7 +13,7 @@ that break them.
 
 Every fabrication is deterministic — fixed keys, RFC 6979 signing, fixed
 authenticator fields — so each committed file is rebuilt and compared, never
-seeded, exactly as @vectors/v0-lifecycle.jsonl@ is (the M3 pattern,
+seeded, exactly as @conformance/vectors/v0-lifecycle.jsonl@ is (the M3 pattern,
 @docs/plan.md@). The Verifier's suite adjudicates the committed files and
 names no symbol of ours; the envelope cases and their expected verdicts are
 ADR-0007's list.
@@ -96,10 +96,10 @@ tests :: TestTree
 tests =
     testGroup
         "Test.EventChain.Mint"
-        ( [ testCase ("vectors/mint/" <> name <> " is what this fabricator builds") (vectorIsCurrent name bytes)
+        ( [ testCase ("conformance/vectors/mint/" <> name <> " is what this fabricator builds") (vectorIsCurrent name bytes)
           | (name, bytes) <- mintVectors
           ]
-            <> [testCase "vectors/mint/cross-soft-webauthn.jsonl wraps the committed foreign envelope" crossIsCurrent]
+            <> [testCase "conformance/vectors/mint/cross-soft-webauthn.jsonl wraps the committed foreign envelope" crossIsCurrent]
         )
 
 -- Keys -----------------------------------------------------------------------
@@ -191,7 +191,7 @@ attestationOf target authData cData =
 
 -- The vectors ----------------------------------------------------------------
 
-{- | Every committed Mint vector: file name under @vectors/mint/@, and the
+{- | Every committed Mint vector: file name under @conformance/vectors/mint/@, and the
 bytes the fabricator builds for it.
 
 Each file is a two-line AOF — a lifecycle target, then the Mint under test —
@@ -380,7 +380,7 @@ handMint vLabel = lineBytesRaw (encodeLine signedO)
 
 {- | The cross-ecosystem vector: a Mint whose envelope came out of
 soft-webauthn's software authenticator (built on python-fido2's primitives),
-generated once by @vectors/mint/cross/generate.py@ and committed as
+generated once by @conformance/vectors/mint/cross/generate.py@ and committed as
 @envelope.json@.
 
 The fixture is input, not output — the foreign device's key is random, so the
@@ -394,7 +394,7 @@ no code and no language, agreeing about what a sound envelope is.
 crossIsCurrent :: IO ()
 crossIsCurrent = do
     root <- findRepoRoot
-    fixture <- BS.readFile (root </> "vectors" </> "mint" </> "cross" </> "envelope.json")
+    fixture <- BS.readFile (root </> "conformance" </> "vectors" </> "mint" </> "cross" </> "envelope.json")
     envelope <- either (assertFailure . ("envelope.json: " <>)) pure (Aeson.eitherDecodeStrict fixture)
     line <- either assertFailure pure (crossLine envelope)
     vectorIsCurrent "cross-soft-webauthn.jsonl" (aof [targetLine, line])
@@ -450,10 +450,10 @@ mismatch matters are 'Test.EventChain.Vectors'' reasons.
 vectorIsCurrent :: FilePath -> ByteString -> IO ()
 vectorIsCurrent name bytes = do
     root <- findRepoRoot
-    let path = root </> "vectors" </> "mint" </> name
+    let path = root </> "conformance" </> "vectors" </> "mint" </> name
     exists <- doesFileExist path
     if not exists
-        then assertFailure ("No vector at " <> path <> ". Generate it from this fabricator and commit it.")
+        then assertFailure ("No vector at " <> path <> ". Generate it from this fabricator and commit it there. If the directory is empty, run `git submodule update --init`.")
         else do
             committed <- BS.readFile path
             committed @?= bytes

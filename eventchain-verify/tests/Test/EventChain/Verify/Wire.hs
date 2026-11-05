@@ -246,7 +246,7 @@ mintIncomplete = refuses (withMember "\"v\":\"1\",\"kind\":\"mint\"") (MissingMe
 
 {- | The vector's first line, inlined.
 
-Inlined rather than read from @vectors/@ on purpose: these tests are about
+Inlined rather than read from @conformance/vectors/@ on purpose: these tests are about
 mutations of a line, and a fixture that moved when the vector was regenerated
 would make every one of them fail for a reason that has nothing to do with what
 it asks.

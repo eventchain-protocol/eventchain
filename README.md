@@ -87,6 +87,10 @@ openssl version
 
 ### Verify an AOF
 
+The vectors are the `conformance` submodule. Clone with
+`--recurse-submodules`, or run `git submodule update --init` in an existing
+clone.
+
 From the repository root, fetch the package index and open the Verifier in
 GHCi. Initial setup downloads dependencies; verification itself is offline.
 
@@ -102,7 +106,7 @@ begins with `../`. Paste these lines at the GHCi prompt:
 import qualified Data.ByteString.Lazy as BL
 import qualified EventChain.Verify as V
 
-aof <- BL.readFile "../vectors/v0-lifecycle.jsonl"
+aof <- BL.readFile "../conformance/vectors/v0-lifecycle.jsonl"
 let summarize (V.Sound _) = "Sound"; summarize verdict = show verdict
 print (fmap (map summarize) (V.verify aof))
 ```
@@ -118,8 +122,8 @@ checks. This example abbreviates successful verdicts but retains error
 details. It does **not** check Payload contents, human identity, or time of
 existence. Type `:quit` to leave GHCi.
 
-The input is the committed [lifecycle AOF](vectors/v0-lifecycle.jsonl), not
-mocked data. [Mint vectors](vectors/mint/) also cover valid envelopes,
+The input is the committed [lifecycle AOF](https://github.com/eventchain-protocol/conformance/blob/main/vectors/v0-lifecycle.jsonl), not
+mocked data. [Mint vectors](https://github.com/eventchain-protocol/conformance/tree/main/vectors/mint) also cover valid envelopes,
 tampering, unsupported Revisions, and orphan targets.
 
 ## How the proof fits together
@@ -382,7 +386,8 @@ that grows with the number of Entries.
   independence, Revisions, and Mint verification.
 - **[Paper amendments](docs/paper-amendments.md)** — amendment status against
   the current paper.
-- **[Vectors](vectors/)** — committed AOFs consumed by the Verifier and
+- **[Vectors](https://github.com/eventchain-protocol/conformance)** — the conformance repository, mounted here as the
+  `conformance` submodule: committed AOFs consumed by the Verifier and
   checked against the Producer's output.
 - **[Implementation plan](docs/plan.md)** — package contracts, milestones,
   and remaining work; a plan, not a list of shipped features.
