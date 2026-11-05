@@ -62,13 +62,15 @@ protocol described in the white paper.
 - **OpenSSL libcrypto ≥ 3.2**, including development files discoverable through
   `pkg-config`. Deterministic ECDSA signing requires this minimum.
 - The **OpenSSL CLI** on `PATH` for the conformance tests.
-- **An arm64 (AArch64) machine.** The ECDSA-P256 verification kernel is
-  vendored [s2n-bignum](https://github.com/awslabs/s2n-bignum) assembly
-  ([ADR-0004](docs/adr/0004-crypto-kernels-libcrypto-ffi.md), as amended),
-  built by the C toolchain cabal already drives, so nothing to install — but
-  only the arm64 sources are vendored, and the crypto package refuses to
-  build elsewhere rather than link without its kernel. x86-64 is a separate
-  vendoring, claimed when a build has run there.
+- **arm64 or x86-64.** On arm64, ECDSA-P256 verification runs on vendored
+  [s2n-bignum](https://github.com/awslabs/s2n-bignum) assembly, built by the
+  C toolchain cabal already drives, so there is nothing extra to install.
+  Every other architecture verifies on libcrypto instead
+  ([ADR-0004](docs/adr/0004-crypto-kernels-libcrypto-ffi.md), as amended).
+  On the arm64 machine measured, libcrypto's verify took 2.25× as long as the
+  table kernel; on x86-64 that comparison has not been measured. The x86-64
+  build has passed `cabal test all` on Linux under emulation, not yet on
+  x86-64 hardware.
 
 On macOS with Homebrew:
 

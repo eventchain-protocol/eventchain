@@ -13,9 +13,10 @@ is the ceiling once signatures are spread across cores:
   crypto, run sequentially.
 * /signatures/ — the signature kernel alone over this file's own keys,
   messages and signatures, one chunk after another: what one thread of the
-  fixed-base kernel costs on these lines, measured in the same process and
-  minutes as the row below it. The key's table is built once, before the
-  clock, as the fold builds it once per chunk.
+  kernel the fold uses costs on these lines, measured in the same process and
+  minutes as the row below it. On arm64 that is the fixed-base kernel, and
+  the key's table is built once, before the clock, as the fold builds it once
+  per chunk; elsewhere it is libcrypto's verify, and the row says which.
 * /verify/ — the whole fold, every verdict forced, on as many capabilities as
   the RTS was given. Capabilities are not cores: the signature check is a
   @safe@ foreign call, so even @-N1@ overlaps the kernel with the next chunk's
@@ -39,7 +40,7 @@ import Data.List.NonEmpty qualified as NE
 import Data.Text qualified as T
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import EventChain (ChainedEvent (..), EventKind (..), ProducedLine (..), entryId, genesisHash, payloadRef, produce)
-import EventChain.Crypto (PrecomputedKey, PrivateKey, SigCheck, precomputeKey, privateKey, privateKeyPublic, publicKey, verifyBatchPrecomputed)
+import EventChain.Crypto (PrecomputedKey, PrivateKey, PublicKey, SigCheck, precomputeKey, privateKey, privateKeyPublic, publicKey, verifyBatch, verifyBatchPrecomputed)
 import EventChain.Crypto.Types (LineHash, Sig, SignedBytes, lineBytesRaw, payloadHashFromBytes)
 import EventChain.Verify (Fault (..), Verdict (..), verify)
 import EventChain.Verify.Canonical (canonicalBytesRaw, canonicalize, signingMessage)
@@ -75,8 +76,9 @@ main = do
     -- signatures, in the fold's chunk size, one chunk after another.
     let triples = signatureTriples file
     _ <- evaluate (length triples)
+    mapM_ evaluate producerTable
     sigPerLine <- perLine (evaluate (foldl' (\n c -> c `seq` n + 1) (0 :: Int) (concatMap batch (chunksOf 256 triples))))
-    row "signatures, sequential" sigPerLine
+    row (maybe "signatures, libcrypto" (const "signatures, table") producerTable) sigPerLine
 
     -- The fold. Forcing a verdict to WHNF forces every check behind it, so the
     -- count is also the proof that the work happened — and a file this bench
@@ -200,7 +202,7 @@ decodedCanonical file = case frameFile file of
         ]
 
 -- | Every line's signature check, as the fold would hand it to the seam.
-signatureTriples :: LBS.ByteString -> [(PrecomputedKey, SignedBytes, Sig)]
+signatureTriples :: LBS.ByteString -> [(PublicKey, SignedBytes, Sig)]
 signatureTriples file = case frameFile file of
     Left err -> error ("framing refused the bench's own file: " <> show err)
     Right lns ->
@@ -210,17 +212,27 @@ signatureTriples file = case frameFile file of
         , let proof = (decodedEntry d).producedProof
         ]
   where
-    -- One promotion and one table, as the fold's per-chunk map arranges for
-    -- a one-key file.
     key claim
-        | claim == privateKeyPublic producerKey = promoted
+        | claim == privateKeyPublic producerKey = producerPublic
         | otherwise = error "the bench's own file carries a key it did not sign with"
-    promoted = case publicKey (privateKeyPublic producerKey) of
-        Right k -> precomputeKey k
-        Left err -> error ("the producer's own key is off the curve: " <> show err)
 
-batch :: [(PrecomputedKey, SignedBytes, Sig)] -> [SigCheck]
-batch = verifyBatchPrecomputed
+-- | The one key the bench's file is signed with, promoted once.
+producerPublic :: PublicKey
+producerPublic = case publicKey (privateKeyPublic producerKey) of
+    Right k -> k
+    Left err -> error ("the producer's own key is off the curve: " <> show err)
+
+{- | Its table, where this build has a table kernel (arm64): one table, as the
+fold's per-chunk map arranges for a one-key file.
+-}
+producerTable :: Maybe PrecomputedKey
+producerTable = precomputeKey producerPublic
+
+-- | One chunk on the kernel the fold would use for this key.
+batch :: [(PublicKey, SignedBytes, Sig)] -> [SigCheck]
+batch chunk = case producerTable of
+    Just table -> verifyBatchPrecomputed [(table, m, sig) | (_, m, sig) <- chunk]
+    Nothing -> either (\e -> error ("libcrypto did not answer: " <> show e)) id (verifyBatch chunk)
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []

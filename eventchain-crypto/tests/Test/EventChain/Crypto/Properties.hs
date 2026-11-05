@@ -27,24 +27,27 @@ module Test.EventChain.Crypto.Properties
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.Either (rights)
+import Data.Maybe (fromMaybe)
 import EventChain.Crypto
 import EventChain.Crypto.Types
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import System.Info (arch)
 import Test.EventChain.Crypto.Hex (unhex)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog (testProperty)
 
 tests :: TestTree
 tests =
-    testGroup
-        "properties"
+    testGroup "properties" $
         [ testGroup "hashing" hashProps
         , testGroup "keys" keyProps
         , testGroup "signatures" sigProps
-        , testGroup "precomputed key against libcrypto" oracleProps
         ]
+            -- Only where there is a table kernel to grade: arm64 (ADR-0004 as
+            -- amended). The KAT suite asserts that this is exactly where one is.
+            <> [testGroup "precomputed key against libcrypto" oracleProps | arch == "aarch64"]
 
 -- Generators -----------------------------------------------------------------
 
@@ -325,7 +328,7 @@ oracleProps =
                 | (useA, m) <- pairs
                 , Right sig <- [sign (if useA then a else b) (signedBytes m)]
                 ]
-            precomputed = [(precomputeKey pub, m, sig) | (pub, m, sig) <- triples]
+            precomputed = [(tabled pub, m, sig) | (pub, m, sig) <- triples]
         verifyBatchPrecomputed precomputed === concatMap (\t -> verifyBatchPrecomputed [t]) precomputed
         agree triples
     ]
@@ -343,9 +346,13 @@ oracleProps =
 agree :: [(PublicKey, SignedBytes, Sig)] -> PropertyT IO ()
 agree triples = do
     let oracle = verifyBatch triples
-        kernel = verifyBatchPrecomputed [(precomputeKey pub, m, sig) | (pub, m, sig) <- triples]
+        kernel = verifyBatchPrecomputed [(tabled pub, m, sig) | (pub, m, sig) <- triples]
     annotateShow oracle
     oracle === Right kernel
+
+-- | A key's table. These properties run only on a build that has the kernel.
+tabled :: PublicKey -> PrecomputedKey
+tabled = fromMaybe (error "no table kernel in this build, yet its properties ran") . precomputeKey
 
 {- | The one answer a chunk of one produces.
 
