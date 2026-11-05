@@ -20,6 +20,8 @@ on:
 jobs:
   linux:
     strategy:
+      # One architecture failing says nothing about the other; let both report.
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
