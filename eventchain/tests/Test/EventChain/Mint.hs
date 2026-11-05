@@ -427,8 +427,8 @@ crossLine envelope = do
 
 -- Plumbing -------------------------------------------------------------------
 
-{- | Terminated per JSON Lines §3, final terminator included, like the
-lifecycle vector.
+{- | Every line ends in @0x0a@, the last included, as the specification
+requires and like the lifecycle vector.
 -}
 aof :: [ByteString] -> ByteString
 aof lns = BS.concat [l <> "\n" | l <- lns]

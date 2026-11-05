@@ -346,13 +346,11 @@ of v0, alongside the vectors):
   with every line we currently emit and then fail on the first legal file written
   by anyone else. M5 owes the vectors a line that catches exactly that — see
   there.
-- **Line framing:** [JSON Lines](https://jsonlines.org/) §3 settles this, and
-  `docs/wire-format.md` cites it rather than restating it: the terminator is
-  `0x0a`, so a line's content is every byte before it and a `0x0d` preceding
-  the terminator is content, hashed with the rest. A CRLF-terminated file is
-  therefore valid JSON Lines whose lines each end in `0x0d`, and it chains to
-  different hashes than the LF-terminated original — ADR-0002's middlebox
-  consequence, not a rule of its own.
+- **Line framing:** [JSON Lines](https://jsonlines.org/) §3 fixes the
+  terminator at `0x0a`, so a line's content is every byte before it. The
+  paper's Entry Specification narrows it: every line ends in `0x0a`, the last
+  included, and a `0x0d` anywhere makes its line malformed. A CRLF-terminated
+  file is therefore rejected at its first line (ADR-0002 §1, as amended).
 
 ## Toolchain
 

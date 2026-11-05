@@ -35,7 +35,7 @@ Status against the paper, limited to behavior covered by the current tests:
 
 | Paper rule | Status | Evidence and boundary |
 | --- | --- | --- |
-| JSON Lines framing and malformed rejection | **Partial** | [Wire tests](eventchain-verify/tests/Test/EventChain/Verify/Wire.hs) cover BOM, terminator, non-object and trailing-content rejection. The implementation accepts an unterminated final line and treats `0x0d` as content; the appendix currently requires LF and rejects CR. |
+| JSON Lines framing and malformed rejection | **Enforced** | [Wire tests](eventchain-verify/tests/Test/EventChain/Verify/Wire.hs) cover BOM, an unterminated last line, `0x0d`, non-object and trailing-content rejection, as the appendix requires. |
 | Base-member encodings; duplicate, unknown and missing members | **Enforced** | [Producer wire tests](eventchain/tests/Test/EventChain/Wire.hs) and [Verifier wire tests](eventchain-verify/tests/Test/EventChain/Wire.hs) cover the vocabulary, unpadded base64url, string values and rejection cases. |
 | `prev_hash` over exact previous-line bytes; zero genesis | **Enforced** | [Producer tests](eventchain/tests/Test/EventChain/Produce.hs) recompute line hashes; [Verifier fold tests](eventchain-verify/tests/Test/EventChain/Verify/Fold.hs) cover genesis, continuity and corruption. |
 | JCS of the Entry without `signature`; ECDSA-P256 | **Enforced** | Independent canonicalizers pass oracle tests; Producer signatures are checked with OpenSSL; crypto tests use RFC 6979 known answers and negative signature cases. |
@@ -124,8 +124,9 @@ every line is valid, 1 when any is not, and 2 for a usage or IO error.
 The output is the same as the [TypeScript verifier's](https://github.com/eventchain-protocol/verify#command-line)
 `aof` command, except that this one omits `event_id` on a faulted line. The
 two share no code, so running both on one file and comparing the output is a
-cross-check. They disagree on two framing cases today; see the first row of
-the status table above.
+cross-check. On the 29 AOF cases in the
+[conformance manifest](https://github.com/eventchain-protocol/conformance/blob/main/manifest.jsonl),
+both give every line the expected outcome.
 
 To build a standalone binary, run `cabal install exe:eventchain-verify`.
 
