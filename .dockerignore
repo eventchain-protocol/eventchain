@@ -1,0 +1,4 @@
+# The release build needs the sources and the conformance vectors, not local
+# build products or history.
+**/dist-newstyle
+.git

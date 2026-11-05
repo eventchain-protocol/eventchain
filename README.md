@@ -55,6 +55,36 @@ protocol described in the white paper.
 
 ## Quick start
 
+### Download the Verifier
+
+Each [release](https://github.com/eventchain-protocol/eventchain/releases)
+carries a prebuilt `eventchain-verify` that needs nothing installed:
+
+| Platform | File |
+| --- | --- |
+| Linux x86-64 | `eventchain-verify-linux-x86_64`, static |
+| Linux arm64 | `eventchain-verify-linux-aarch64`, static |
+| macOS arm64, 15 or later | `eventchain-verify-macos-aarch64`, libcrypto linked in |
+
+```sh
+curl -fLo eventchain-verify https://github.com/eventchain-protocol/eventchain/releases/latest/download/eventchain-verify-linux-x86_64
+chmod +x eventchain-verify
+curl -fLO https://raw.githubusercontent.com/eventchain-protocol/conformance/main/vectors/v0-lifecycle.jsonl
+./eventchain-verify aof v0-lifecycle.jsonl
+```
+
+Replace the file name with your platform's. The output and exit codes are
+described under [Verify an AOF](#verify-an-aof). Each release also has a
+`SHA256SUMS` file. libcrypto is linked into each binary, so an OpenSSL
+security fix reaches it only through a new release; the release notes name
+the OpenSSL version each was built with. The binaries are not code-signed, so on macOS download
+with `curl` as above: a file downloaded in a browser is quarantined, and
+Gatekeeper refuses to run it.
+
+On Intel Macs and other platforms, build from source as below. Every
+non-arm64 build verifies on libcrypto
+([ADR-0004](docs/adr/0004-crypto-kernels-libcrypto-ffi.md), as amended).
+
 ### Prerequisites
 
 - **GHC 9.12.4** — the compiler this project targets; other releases are not claimed.
@@ -130,7 +160,12 @@ cross-check. On the 29 AOF cases in the
 [conformance manifest](https://github.com/eventchain-protocol/conformance/blob/main/manifest.jsonl),
 both give every line the expected outcome.
 
-To build a standalone binary, run `cabal install exe:eventchain-verify`.
+To build a standalone binary, run `cabal install exe:eventchain-verify`. It
+links your libcrypto dynamically. The release binaries are built by
+[`release/linux.Dockerfile`](release/linux.Dockerfile) and
+[`release/macos.sh`](release/macos.sh), which link libcrypto in and check the
+result. A `v*` tag builds and publishes them
+([`.github/workflows/release.yml`](.github/workflows/release.yml)).
 
 ### Verify an AOF from Haskell
 
