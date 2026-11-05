@@ -101,6 +101,41 @@ library
         , parallel          >=3.2  && <3.4
         , text              >=2.1  && <2.3
 
+-- `eventchain-verify aof FILE`: this library as a program a developer runs on
+-- a file without writing any Haskell. It prints exactly what the TypeScript
+-- verifier's `aof` command prints, one JSON line per AOF line, and uses the
+-- same exit codes (0 every line valid, 1 some line not, 2 usage or IO error).
+-- So anyone can run both verifiers on one file and `diff` the outputs; the two
+-- share no code, and identical output is the evidence they read the format
+-- the same way.
+--
+-- It needs no package the library does not already use. `-with-rtsopts=-N`
+-- puts every core to work by default, so a user does not have to know to pass
+-- `+RTS -N`.
+executable eventchain-verify
+    hs-source-dirs:     app
+    main-is:            Main.hs
+    default-language:   GHC2024
+    default-extensions:
+        StrictData
+        DerivingVia
+        PatternSynonyms
+        NoFieldSelectors
+        OverloadedRecordDot
+
+    ghc-options:
+        -Wall -Wcompat -Widentities -Wincomplete-record-updates
+        -Wincomplete-uni-patterns -Wmissing-export-lists
+        -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+        -threaded -rtsopts "-with-rtsopts=-N"
+
+    build-depends:
+        , base              >=4.20 && <5
+        , base64            >=1.0  && <1.1
+        , bytestring        >=0.12 && <0.14
+        , eventchain-crypto
+        , eventchain-verify
+
 test-suite conformance
     type:               exitcode-stdio-1.0
     hs-source-dirs:     tests

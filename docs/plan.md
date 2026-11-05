@@ -6,6 +6,11 @@ deliverable is: a producer that appends entries, a verifier that folds
 over an AOF, a normative wire-format document, and golden test vectors
 other implementations can verify against.
 
+*Superseded in one respect after v0:* the Verifier now ships a command,
+`eventchain-verify aof FILE`, so a developer can check a file without writing
+Haskell. It is a thin printer over `verify` and adds no checks; its output
+matches the TypeScript verifier's `aof` command so the two can be compared.
+
 The producer and the verifier are **separate packages that share no format
 logic** (ADR-0005). A verifier that imports the producer's canonicalizer
 attests self-consistency, not conformance; the vectors are evidence only
