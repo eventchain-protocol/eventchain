@@ -2,7 +2,7 @@
 
 {- | M4's gate: the committed Mint vectors, adjudicated blind.
 
-Each file under @vectors/mint/@ is a two-line AOF a fabricator this package
+Each file under @conformance/vectors/mint/@ is a two-line AOF a fabricator this package
 has never seen built — a lifecycle target, then a Mint exercising one rule
 from ADR-0007's list — and each case here states the verdict the rules
 require. The wall holds as it did at M3: nothing here can name the
@@ -151,10 +151,10 @@ malformedWith name expected = do
 adjudicate :: FilePath -> IO [Verdict]
 adjudicate name = do
     root <- findRepoRoot
-    let path = root </> "vectors" </> "mint" </> name
+    let path = root </> "conformance" </> "vectors" </> "mint" </> name
     exists <- doesFileExist path
     if not exists
-        then assertFailure ("No vector at " <> path <> ". The fabricator's suite commits these; this one only reads them.")
+        then assertFailure ("No vector at " <> path <> ". The fabricator's suite commits these; this one only reads them. If the directory is empty, run `git submodule update --init`.")
         else do
             file <- LBS.readFile path
             either (assertFailure . show) pure (verify file)
