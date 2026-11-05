@@ -71,7 +71,6 @@ module EventChain.Verify
     ) where
 
 import Control.Parallel.Strategies (evalList, evalTuple2, parBuffer, rseq, using)
-import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.List (zipWith5)
@@ -98,6 +97,7 @@ import EventChain.Verify.WebAuthn (EnvelopeFault (..), assertionMessage, envelop
 import EventChain.Verify.Wire
     ( DecodeError
     , DecodedEntry
+    , FramedLine
     , FramingError
     , decodeLine
     , decodedEntry
@@ -105,6 +105,8 @@ import EventChain.Verify.Wire
     , decodedObject
     , frameFile
     , frameLines
+    , framedContent
+    , framedPosition
     )
 import GHC.Conc (numCapabilities)
 
@@ -341,7 +343,7 @@ after it may have been evaluated speculatively — wasted work on a file that wa
 going to be refused anyway — and its verdicts are never emitted, so what the
 caller sees is what the sequential fold would have said.
 -}
-fold :: LineHash -> [(ChainPosition, ByteString)] -> [Verdict]
+fold :: LineHash -> [FramedLine] -> [Verdict]
 fold prev lns = untilHalt (map (\(p, s, c) -> chunkVerdicts p s c) staged `using` parBuffer inFlight (evalTuple2 (evalList rseq) rseq))
   where
     chunks = chunksOf chunkSize lns
@@ -372,12 +374,10 @@ by decoding that one line on the spine — ~7 µs per chunk against a ~520 µs
 table build saved per chunk of a run. 'Nothing' for a line that is not an
 Entry, and then the chunk after it is not staged anyway.
 -}
-lastKey :: [(ChainPosition, ByteString)] -> Maybe ClaimedKey
-lastKey chunk = case decodeLine pos raw of
+lastKey :: [FramedLine] -> Maybe ClaimedKey
+lastKey chunk = case decodeLine (last chunk) of
     Right d -> Just (decodedEntry d).producedProof.publicKey
     Left _ -> Nothing
-  where
-    (pos, raw) = last chunk
 
 {- | The digest the chunk after this one must chain to: its last line's,
 computed from the raw bytes — the same bytes 'chunkVerdicts' hashes, and so
@@ -386,8 +386,8 @@ the same digest, reached without that chunk's decode.
 'Nothing' when the last line is not even well-formed bytes: there is no digest
 to chain to, and no chunk that would need one.
 -}
-boundary :: [(ChainPosition, ByteString)] -> Maybe LineHash
-boundary chunk = case lineBytes (snd (last chunk)) of
+boundary :: [FramedLine] -> Maybe LineHash
+boundary chunk = case lineBytes (framedContent (last chunk)) of
     Left _ -> Nothing
     Right ln -> case hashLines [ln] of
         [h] -> Just h
@@ -406,7 +406,7 @@ Returns the verdicts and, if the chunk halted on a malformed line, the error
 it halted on — already the chunk's last verdict, returned beside the list so
 the fold can stop without scanning for it.
 -}
-chunkVerdicts :: LineHash -> Promoted -> [(ChainPosition, ByteString)] -> ([Verdict], Maybe DecodeError)
+chunkVerdicts :: LineHash -> Promoted -> [FramedLine] -> ([Verdict], Maybe DecodeError)
 chunkVerdicts prev inherited lns =
     ( zipWith5 judge decoded hashes links attributions envelopes <> foldMap (pure . Malformed) halt
     , halt
@@ -445,11 +445,11 @@ what was established about them was established from their own bytes. Which line
 broke the file is the finding, and dropping its predecessors' verdicts would
 hide where the good part ended.
 -}
-spanDecoded :: [(ChainPosition, ByteString)] -> ([(ChainPosition, DecodedEntry)], Maybe DecodeError)
+spanDecoded :: [FramedLine] -> ([(ChainPosition, DecodedEntry)], Maybe DecodeError)
 spanDecoded [] = ([], Nothing)
-spanDecoded ((pos, raw) : more) = case decodeLine pos raw of
+spanDecoded (framed : more) = case decodeLine framed of
     Left err -> ([], Just err)
-    Right d -> let (rest, halt) = spanDecoded more in ((pos, d) : rest, halt)
+    Right d -> let (rest, halt) = spanDecoded more in ((framedPosition framed, d) : rest, halt)
 
 {- | Each line's claimed @prev_hash@ against the digest of the line before it.
 

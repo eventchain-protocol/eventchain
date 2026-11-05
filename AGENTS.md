@@ -47,16 +47,19 @@ Read these first, in order:
   the dependency edge a docstring draws is one nothing will catch, and it was
   already drawn twice before M0 caught it by hand. Write "the Verifier's codec"
   rather than linking it.
-- **JSON Lines owns framing. Cite it; restating it is how we get it wrong.**
-  The AOF *is* a JSON Lines document (`CONTEXT.md`, `docs/protocol.md`): a
-  conformant JSON Lines reader reads one, and that is the open-protocol
-  promise. <https://jsonlines.org/> §3 fixes the terminator at `0x0a`, so a
-  line's content is every byte before it and a `0x0d` there is content, hashed
-  with the rest — a CRLF file is valid JSON Lines whose lines end in `0x0d`.
+- **JSON Lines owns framing, and the specification narrows it. Cite both;
+  restating them is how we get it wrong.** The AOF *is* a JSON Lines document
+  (`CONTEXT.md`, `docs/protocol.md`): a conformant JSON Lines reader reads one,
+  and that is the open-protocol promise. <https://jsonlines.org/> §3 fixes the
+  terminator at `0x0a`, so a line's content is every byte before it. The
+  paper's Entry Specification narrows that twice: every line ends in `0x0a`,
+  the last included, and a `0x0d` anywhere makes its line malformed (ADR-0002
+  §1). So every AOF is JSON Lines, but not every JSON Lines file is an AOF.
   ADR-0002 fills the gaps the *paper* leaves; where JSON Lines or RFC 8785
-  already speak they are the source of truth, and one of our rules
-  contradicting them is a bug in our code. Read the spec at the source before
-  writing a framing rule; a summary of it is not the spec.
+  speak and the paper does not narrow them, they are the source of truth, and
+  one of our rules contradicting them is a bug in our code. Read the specs at
+  the source before writing a framing rule; a summary of them is not the
+  spec.
 - **The Producer never parses JSON.** It emits JSON. No JSON parser belongs
   in `eventchain` — that absence is a security property, not an oversight.
   This is a bound on the *parse* step, not on framing: splitting a file into

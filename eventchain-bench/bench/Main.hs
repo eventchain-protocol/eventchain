@@ -195,8 +195,8 @@ decodedCanonical file = case frameFile file of
     Left err -> error ("framing refused the bench's own file: " <> show err)
     Right lns ->
         [ canonicalBytesRaw (canonicalize (decodedObject d))
-        | (pos, raw) <- lns
-        , let d = either (\e -> error ("the bench's own line did not decode: " <> show e)) id (decodeLine pos raw)
+        | framedLine <- lns
+        , let d = either (\e -> error ("the bench's own line did not decode: " <> show e)) id (decodeLine framedLine)
         ]
 
 -- | Every line's signature check, as the fold would hand it to the seam.
@@ -205,8 +205,8 @@ signatureTriples file = case frameFile file of
     Left err -> error ("framing refused the bench's own file: " <> show err)
     Right lns ->
         [ (key proof.publicKey, signingMessage (canonicalize (decodedObject d)), proof.signature)
-        | (pos, raw) <- lns
-        , let d = either (\e -> error ("the bench's own line did not decode: " <> show e)) id (decodeLine pos raw)
+        | framedLine <- lns
+        , let d = either (\e -> error ("the bench's own line did not decode: " <> show e)) id (decodeLine framedLine)
         , let proof = (decodedEntry d).producedProof
         ]
   where

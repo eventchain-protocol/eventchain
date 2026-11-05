@@ -35,6 +35,9 @@ module EventChain.Verify.Wire
 
       -- * Framing
     , FramingError (..)
+    , FramedLine
+    , framedPosition
+    , framedContent
     , frameFile
     , frameLines
 
@@ -44,6 +47,7 @@ module EventChain.Verify.Wire
     , decodeLine
     ) where
 
+import Control.Monad (unless, when)
 import Data.Aeson.Decoding.ByteString (bsToTokens)
 import Data.Aeson.Decoding.Tokens (Lit (..), TkRecord (..), Tokens (..))
 import Data.Aeson.Key qualified as Key
@@ -125,31 +129,58 @@ decodedObject d = d.object
 decodedEntry :: DecodedEntry -> Entry
 decodedEntry d = d.entry
 
-{- | The only way framing can fail.
+{- | The only way framing can fail as a whole file.
 
-One constructor, because JSON Lines leaves framing almost nothing to get wrong:
-the terminator is fixed, a line's content is what precedes it, and everything
-else about a line is the decoder's problem.
+One constructor, because every other framing rule is about a line and is
+reported at that line: an unterminated last line and a @0x0d@ are
+'LineUnterminated' and 'LineHasCarriageReturn', so the lines before them keep
+their verdicts.
 -}
 data FramingError
     = -- | The file opens with a UTF-8 byte order mark, which JSON Lines forbids.
       FileHasBom
     deriving stock (Eq, Show)
 
-{- | Split a file into its lines, per [JSON Lines](https://jsonlines.org/) §3.
+{- | One line as the framer found it: where it sits, its content, and whether
+a @0x0a@ ended it.
 
-The terminator is @0x0a@ and a line's content is every byte before it, so a
-@0x0d@ sitting there is content and will be hashed with the rest — a
-CRLF-terminated file is valid JSON Lines whose lines each end in @0x0d@, and it
-chains to different hashes than the LF-terminated original. That is ADR-0002's
-middlebox consequence working as specified, not a case to normalize away. This
-function does not look for @0x0d@ at all, which is the point.
+The content is every byte before the terminator, which is what the chain
+hashes (ADR-0002 §1). Whether a terminator followed is kept rather than
+judged here, because the specification makes an unterminated line /malformed/
+— a line-level verdict, reported at the line, after the lines before it have
+theirs. Only the last line of a file can lack one.
 
-A trailing terminator on the last line is optional ("the last character in the
-file may be a line separator, and it will be treated the same as if there was no
-line separator present"), so the empty remainder after a final @0x0a@ is not a
-line. An empty file has no lines and is not an error: a chain of zero entries is
-intact, vacuously.
+The constructor is hidden: a position comes from the framer or does not exist.
+-}
+data FramedLine = FramedLine
+    { at :: ChainPosition
+    , content :: ByteString
+    , terminated :: Bool
+    }
+    deriving stock (Eq, Show)
+
+-- | Where the line sits in the file.
+framedPosition :: FramedLine -> ChainPosition
+framedPosition f = f.at
+
+-- | The line's bytes without its terminator: what the chain hashes.
+framedContent :: FramedLine -> ByteString
+framedContent f = f.content
+
+{- | Split a file into its lines.
+
+The terminator is @0x0a@ ([JSON Lines](https://jsonlines.org/) §3), and a
+line's content is every byte before it. The specification narrows JSON Lines
+in two ways, and both are line-level faults rather than framing failures:
+every line ends in @0x0a@, the last included, and a @0x0d@ anywhere makes the
+line that holds it malformed ('decodeLine'). Every AOF is still a JSON Lines
+document; not every JSON Lines document is an AOF. The framer itself does not
+look for @0x0d@: it only splits, and the decoder judges.
+
+So the bytes after the final @0x0a@ are a line only if there are any. A file
+that ends in @0x0a@ has no remainder; one that does not ends in an
+unterminated line, which 'decodeLine' refuses. An empty file has no lines and
+is not an error: a chain of zero entries is intact, vacuously.
 
 The byte order mark is checked here rather than in
 'EventChain.Crypto.Types.lineBytes' because it is a /file/-level rule — JSON
@@ -161,7 +192,7 @@ rejected for being a BOM, so the error says so.
 Returns lines lazily against a lazy file, so a fold over a large AOF holds one
 line rather than all of them. The 'Either' resolves after three bytes.
 -}
-frameFile :: LBS.ByteString -> Either FramingError [(ChainPosition, ByteString)]
+frameFile :: LBS.ByteString -> Either FramingError [FramedLine]
 frameFile file
     | LBS.isPrefixOf bom file = Left FileHasBom
     | otherwise = Right (frameLines (chainPosition 0) file)
@@ -179,14 +210,15 @@ with them, which is not JSON and is reported as such at that line's position.
 This is the framer a resumed verification uses — the bytes after the last line
 a holder checked, counted from the position after it.
 -}
-frameLines :: ChainPosition -> LBS.ByteString -> [(ChainPosition, ByteString)]
-frameLines from = zip (map chainPosition [chainPositionIndex from ..]) . split
+frameLines :: ChainPosition -> LBS.ByteString -> [FramedLine]
+frameLines from = zipWith frame (map chainPosition [chainPositionIndex from ..]) . split
   where
+    frame pos (bytes, ended) = FramedLine{at = pos, content = bytes, terminated = ended}
     split bs
         | LBS.null bs = []
         | otherwise = case LBS.elemIndex 0x0a bs of
-            Nothing -> [LBS.toStrict bs]
-            Just i -> LBS.toStrict (LBS.take i bs) : split (LBS.drop (i + 1) bs)
+            Nothing -> [(LBS.toStrict bs, False)]
+            Just i -> (LBS.toStrict (LBS.take i bs), True) : split (LBS.drop (i + 1) bs)
 
 {- | Every way one line can fail to be an Entry.
 
@@ -195,7 +227,20 @@ it is about wherever there is one, because "this line is malformed" sends a
 reader back to the bytes with nothing to look for.
 -}
 data LineError
-    = -- | The bytes are not an AOF line's content at all: empty, or not UTF-8.
+    = {- | The file's last line has no @0x0a@ after it. The specification
+      requires one after every line, so a reader can tell a finished line from
+      one still being written, and appending to the file cannot run two lines
+      together.
+      -}
+      LineUnterminated
+    | {- | The line holds a @0x0d@. The specification makes it malformed
+      anywhere: a raw one cannot appear in a JSON string, and a Producer's
+      output has no whitespace between tokens, so it marks a file rewritten in
+      transit — a CRLF conversion, typically — and the reason says so rather
+      than surfacing as a chain mismatch on the next line.
+      -}
+      LineHasCarriageReturn
+    | -- | The bytes are not an AOF line's content at all: empty, or not UTF-8.
       LineNotWellFormed ShapeError
     | -- | The line is not JSON. Carries @aeson@'s complaint.
       LineNotJson Text
@@ -258,12 +303,16 @@ detectable, and 'DuplicateMember' is what it becomes. That the fold is also
 /less/ work than @decode@ — which is this same tokenizer plus a @KeyMap@ build
 we would immediately discard — is a bonus and not the reason.
 -}
-decodeLine :: ChainPosition -> ByteString -> Either DecodeError DecodedEntry
-decodeLine pos raw = case build of
+decodeLine :: FramedLine -> Either DecodeError DecodedEntry
+decodeLine framed = case build of
     Left err -> Left (DecodeError pos err)
     Right d -> Right d
   where
+    pos = framed.at
+    raw = framed.content
     build = do
+        unless framed.terminated (Left LineUnterminated)
+        when (BS.elem 0x0d raw) (Left LineHasCarriageReturn)
         ln <- first LineNotWellFormed (lineBytes raw)
         members <- foldTokens (bsToTokens raw)
         object <- completeObject members

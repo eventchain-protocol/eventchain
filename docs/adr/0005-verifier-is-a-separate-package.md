@@ -47,6 +47,9 @@ code had quietly decided, rejecting `0x0D`. Reading JSON Lines §3 at the
 source settled it against us: the terminator is `0x0a`, so a `0x0d` before it
 is content and is hashed with the rest. The code was wrong, not merely
 undocumented; ADR-0002 §1 now says so and `lineBytes` rejects only `0x0a`.
+(Later reversed: the paper's Entry Specification makes a `0x0d` malformed, so
+the code's first reading matched the paper, and ADR-0002 §1 as amended on
+2026-11-05 follows it. The point stands: the rule was real and unwritten.)
 
 The live instance is the byte order mark. JSON Lines requires UTF-8 without
 one; nothing we have written says whether an AOF may carry one, and nothing

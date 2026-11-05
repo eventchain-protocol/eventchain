@@ -15,7 +15,11 @@ contacting the system that supplied it.
 This repository contains three implemented Haskell libraries: a **Producer**
 that signs Entries into AOF lines, an independent **Verifier** that checks AOF
 bytes offline, and a shared **crypto** package for SHA-256 and ECDSA-P256.
-There is no CLI or web UI here. The **Reference Hub** lives in the separate,
+The Verifier also ships as a command, `eventchain-verify`. There is no web UI
+here; the [browser verifier](https://eventchain-protocol.github.io/verify/) is
+the independent TypeScript one in
+[`eventchain-protocol/verify`](https://github.com/eventchain-protocol/verify).
+The **Reference Hub** lives in the separate,
 public [`eventchain-protocol/hub`](https://github.com/eventchain-protocol/hub)
 repository and is a work in progress.
 
@@ -31,7 +35,7 @@ Status against the paper, limited to behavior covered by the current tests:
 
 | Paper rule | Status | Evidence and boundary |
 | --- | --- | --- |
-| JSON Lines framing and malformed rejection | **Partial** | [Wire tests](eventchain-verify/tests/Test/EventChain/Verify/Wire.hs) cover BOM, terminator, non-object and trailing-content rejection. The implementation accepts an unterminated final line and treats `0x0d` as content; the appendix currently requires LF and rejects CR. |
+| JSON Lines framing and malformed rejection | **Enforced** | [Wire tests](eventchain-verify/tests/Test/EventChain/Verify/Wire.hs) cover BOM, an unterminated last line, `0x0d`, non-object and trailing-content rejection, as the appendix requires. |
 | Base-member encodings; duplicate, unknown and missing members | **Enforced** | [Producer wire tests](eventchain/tests/Test/EventChain/Wire.hs) and [Verifier wire tests](eventchain-verify/tests/Test/EventChain/Wire.hs) cover the vocabulary, unpadded base64url, string values and rejection cases. |
 | `prev_hash` over exact previous-line bytes; zero genesis | **Enforced** | [Producer tests](eventchain/tests/Test/EventChain/Produce.hs) recompute line hashes; [Verifier fold tests](eventchain-verify/tests/Test/EventChain/Verify/Fold.hs) cover genesis, continuity and corruption. |
 | JCS of the Entry without `signature`; ECDSA-P256 | **Enforced** | Independent canonicalizers pass oracle tests; Producer signatures are checked with OpenSSL; crypto tests use RFC 6979 known answers and negative signature cases. |
@@ -91,11 +95,46 @@ The vectors are the `conformance` submodule. Clone with
 `--recurse-submodules`, or run `git submodule update --init` in an existing
 clone.
 
-From the repository root, fetch the package index and open the Verifier in
-GHCi. Initial setup downloads dependencies; verification itself is offline.
+From the repository root, fetch the package index and run the Verifier on the
+committed lifecycle vector. The first run downloads dependencies and builds;
+verification itself is offline.
 
 ```sh
 cabal update
+cabal run -v0 eventchain-verify -- aof conformance/vectors/v0-lifecycle.jsonl
+```
+
+Expected result, one JSON line per AOF line:
+
+```text
+{"line":1,"outcome":"valid","event_id":"dBnWt41McCT7DYaltzQSAi5KH4NttgOuOGKU-xuSH8k"}
+{"line":2,"outcome":"valid","event_id":"SlHtaGwdfQ_0t8FVR69nzBOfBBiPko486PU_rhhfwSg"}
+{"line":3,"outcome":"valid","event_id":"d4xf0V-OjErAonXOTwrgrvVZIolIv61wcGQtVjB3YBQ"}
+{"line":4,"outcome":"valid","event_id":"LkOkJDZAAs92ykSQA5yEf1d7tVxF8vYu_MV9YU5qV08"}
+```
+
+`valid` means the line passed continuity and signature checks; the
+`event_id` is the SHA-256 of the line's bytes, unpadded base64url. It does
+**not** check Payload contents, human identity, or time of existence. A faulted
+line reports the specification's fault name (`chain_mismatch`,
+`key_off_curve`, `signature_invalid`, `attestation_fault`) or `malformed`, and
+the reason for a malformed line goes to stderr. The exit status is 0 when
+every line is valid, 1 when any is not, and 2 for a usage or IO error.
+
+The output is the same as the [TypeScript verifier's](https://github.com/eventchain-protocol/verify#command-line)
+`aof` command, except that this one omits `event_id` on a faulted line. The
+two share no code, so running both on one file and comparing the output is a
+cross-check. On the 29 AOF cases in the
+[conformance manifest](https://github.com/eventchain-protocol/conformance/blob/main/manifest.jsonl),
+both give every line the expected outcome.
+
+To build a standalone binary, run `cabal install exe:eventchain-verify`.
+
+### Verify an AOF from Haskell
+
+Open the Verifier in GHCi:
+
+```sh
 cabal repl eventchain-verify
 ```
 
@@ -351,7 +390,7 @@ Three libraries share one Cabal project:
 | Package | Role | Start here |
 | --- | --- | --- |
 | [`eventchain`](eventchain/) | Producer: `ChainedEvent` → signed line and line hash. Never parses JSON. | [`EventChain`](eventchain/src/EventChain.hs), [`produce`](eventchain/src/EventChain/Produce.hs) |
-| [`eventchain-verify`](eventchain-verify/) | Verifier: AOF bytes → typed verdicts, chunks fanned across cores; resumes from a Checkpoint; separate Minted-status derivation. | [`verify`](eventchain-verify/src/EventChain/Verify.hs), [`verifyFrom`](eventchain-verify/src/EventChain/Verify.hs), [`mintedStatus`](eventchain-verify/src/EventChain/Verify/Minted.hs) |
+| [`eventchain-verify`](eventchain-verify/) | Verifier: AOF bytes → typed verdicts, chunks fanned across cores; resumes from a Checkpoint; separate Minted-status derivation. | [`eventchain-verify` command](eventchain-verify/app/Main.hs), [`verify`](eventchain-verify/src/EventChain/Verify.hs), [`verifyFrom`](eventchain-verify/src/EventChain/Verify.hs), [`mintedStatus`](eventchain-verify/src/EventChain/Verify/Minted.hs) |
 | [`eventchain-crypto`](eventchain-crypto/) | Shared kernels through one batched FFI seam: SHA-256 and signing on libcrypto, ECDSA-P256 verification on vendored s2n-bignum assembly from a precomputed key; plus byte/hash/key types. | [`EventChain.Crypto`](eventchain-crypto/src/EventChain/Crypto.hs) |
 
 Two more packages ship nothing and nothing depends on them: [`gates/`](gates/)

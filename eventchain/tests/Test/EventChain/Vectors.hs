@@ -86,11 +86,9 @@ vectorIsCurrent = do
 
 {- | The vector's bytes: the AOF these fixed events produce under the fixed key.
 
-Terminated per [JSON Lines](https://jsonlines.org/) §3 — every line, including
-the last, ends in @0x0a@. The final terminator is optional in the format and
-present here on purpose: a vector should be the ordinary case, and a reader that
-mishandles the optional-trailing-newline rule should fail on a file that has one
-rather than on one that does not.
+Every line, including the last, ends in @0x0a@: the terminator
+[JSON Lines](https://jsonlines.org/) §3 fixes, and which the specification
+requires after the last line too, where JSON Lines makes it optional.
 -}
 vectorAof :: ByteString
 vectorAof = BS.concat [lineBytesRaw p.line <> "\n" | p <- chainFrom producerKey vectorEvents]

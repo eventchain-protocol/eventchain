@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | The codec's strictness, and the framing rules JSON Lines fixes.
+{- | The codec's strictness, and the framing rules: JSON Lines', narrowed by
+the specification.
 
 Every line here is written by hand. That is not a shortcut around a generator —
 it is the only honest shape for these tests. What is under test is what the
@@ -24,6 +25,7 @@ import EventChain.Verify.Wire
     , decodeLine
     , decodedObject
     , frameFile
+    , framedContent
     )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -35,8 +37,9 @@ tests =
         [ testGroup
             "framing"
             [ testCase "a byte order mark is refused, as a BOM and not as bad JSON" bomRefused
-            , testCase "the terminator is 0x0a and a trailing one is optional" terminator
-            , testCase "0x0d before the terminator is content, not framing" crIsContent
+            , testCase "the terminator is 0x0a, and a final one ends the file" terminator
+            , testCase "a last line without 0x0a is malformed" unterminated
+            , testCase "a 0x0d anywhere on a line is malformed" carriageReturn
             , testCase "an empty file has no lines and is not an error" emptyFile
             ]
         , testGroup
@@ -75,29 +78,38 @@ syntax error in a line that has none.
 bomRefused :: Assertion
 bomRefused = frameFile (LBS.fromStrict ("\xef\xbb\xbf" <> validLine <> "\n")) @?= Left FileHasBom
 
-{- | Lines end at @0x0a@, and the last one need not.
+{- | Lines end at @0x0a@, and the bytes after the last one are no line at all.
 
-[JSON Lines](https://jsonlines.org/) §3: "the last character in the file may be a
-line separator, and it will be treated the same as if there was no line
-separator present". So the empty remainder after a final terminator is not a
-line — a verifier that made one out of it would report a phantom malformed entry
+So a file that ends in @0x0a@ frames into exactly its lines: a verifier that
+made a line out of the empty remainder would report a phantom malformed entry
 on every well-formed file.
 -}
 terminator :: Assertion
-terminator = do
-    framed "a\nb\n" @?= ["a", "b"]
-    framed "a\nb" @?= ["a", "b"]
+terminator = framed "a\nb\n" @?= ["a", "b"]
 
-{- | A @0x0d@ sitting before the terminator is one of the line's content bytes.
-
-ADR-0002 §1, and JSON Lines is what settles it: the terminator is @0x0a@, so a
-line's content is every byte before it. A CRLF-terminated file is valid JSON
-Lines whose lines each end in @0x0d@, and it chains to different hashes than the
-LF-terminated original — the middlebox consequence, working as specified. The
-framer must not look for @0x0d@ at all, and this is what says it does not.
+{- | The specification requires @0x0a@ after every line, the last included,
+where JSON Lines makes the last one optional. The narrowing is what lets a
+reader tell a finished line from one still being written, and what keeps an
+append from running two lines together. The line is refused as unterminated
+rather than for its content, which here is a valid Entry.
 -}
-crIsContent :: Assertion
-crIsContent = framed "a\r\nb\r\n" @?= ["a\r", "b\r"]
+unterminated :: Assertion
+unterminated = case frameFile (LBS.fromStrict validLine) of
+    Left err -> assertFailure ("framing refused the file: " <> show err)
+    Right [line] -> case decodeLine line of
+        Left (DecodeError pos reason) -> (chainPositionIndex pos, reason) @?= (0, LineUnterminated)
+        Right _ -> assertFailure "an unterminated line decoded"
+    Right lns -> assertFailure ("framed into " <> show (length lns) <> " lines, not one")
+
+{- | A @0x0d@ makes its line malformed wherever it sits. Before the terminator
+it is the CRLF case, and JSON would read it as whitespace; between tokens it
+is whitespace too. Either way the line is refused for the @0x0d@, so a
+converted file names its cause instead of breaking the chain one line later.
+-}
+carriageReturn :: Assertion
+carriageReturn = do
+    refuses (validLine <> "\r") LineHasCarriageReturn
+    refuses ("{\r" <> BS.drop 1 validLine) LineHasCarriageReturn
 
 -- | A chain of zero entries is intact, vacuously.
 emptyFile :: Assertion
@@ -277,12 +289,13 @@ replace needle new
 same way anything else must: a t'EventChain.Verify.Types.ChainPosition' comes
 from the framer or it does not exist. That the tests cannot fabricate one is the
 type discipline holding at the package edge, not an inconvenience to work
-around.
+around. The fixture gets its @0x0a@ here, so that what each test refuses is
+the line and not its missing terminator.
 -}
 decodeOnly :: ByteString -> Either DecodeError DecodedEntry
-decodeOnly line = case frameFile (LBS.fromStrict line) of
+decodeOnly line = case frameFile (LBS.fromStrict (line <> "\n")) of
     Left err -> error ("framing refused the fixture: " <> show err)
-    Right [(pos, raw)] -> decodeLine pos raw
+    Right [framedLine] -> decodeLine framedLine
     Right lns -> error ("the fixture framed into " <> show (length lns) <> " lines, not one")
 
 -- | The line is refused, with exactly this complaint, at the line's own position.
@@ -301,4 +314,4 @@ refusesWith line matches = case decodeOnly line of
 framed :: LBS.ByteString -> [ByteString]
 framed file = case frameFile file of
     Left err -> error ("framing refused a file it should not have: " <> show err)
-    Right lns -> map snd lns
+    Right lns -> map framedContent lns

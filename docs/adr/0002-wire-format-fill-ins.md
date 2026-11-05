@@ -18,9 +18,22 @@ Decisions:
 1. **Chain bytes:** `prev_hash` = SHA-256 of the previous line's content —
    every byte between the preceding terminator (or the start of file) and its
    own `0x0a` terminator, which JSON Lines §3 fixes ("Line Terminator is
-   `'\n'`"). A `0x0d` sitting before the terminator is one of the line's
-   content bytes and is hashed with them. No canonicalization — any
-   re-serialization of a proof artifact breaks the chain by design.
+   `'\n'`"). No canonicalization — any re-serialization of a proof artifact
+   breaks the chain by design.
+
+   *Amended 2026-11-05.* This section used to say that a `0x0d` before the
+   terminator is content and is hashed with the line, and the Verifier
+   accepted a last line without a terminator, both as JSON Lines allows. The
+   paper's Entry Specification narrows JSON Lines instead: "Each line ends in
+   `0x0a`, and a file that contains `0x0d` anywhere counts as malformed." The
+   Verifier now follows the paper and reports either case as a malformed line
+   at that line (`LineUnterminated`, `LineHasCarriageReturn`). The paper's
+   rule costs a conforming Producer nothing: a raw `0x0d` cannot appear in a
+   JSON string, and minified output has no whitespace between tokens. In
+   return, every line in a file is finished, an append cannot run two lines
+   together, and a file converted to CRLF fails with its cause named rather
+   than as a chain mismatch one line later. Every AOF is still a JSON Lines
+   document.
 
    The paper's Table 4.1 and specification appendix now state this same
    exact-bytes rule. Evidence for preferring bytes over `SHA256(JCS(entry))`:
@@ -92,8 +105,8 @@ Decisions:
 ## Consequences
 
 - Files re-encoded by middleboxes fail verification. Feature, not bug. A tool
-  that rewrites the file's terminators to CRLF is one instance: it appends
-  `0x0d` to every line's content, so every line hashes differently and the
-  chain breaks at the first one.
+  that rewrites the file's terminators to CRLF is one instance: it puts a
+  `0x0d` on every line, so the first line is malformed and the file is
+  rejected there.
 - Any other implementation needs only this document and the golden
   vectors to interoperate — no reference to our code required.
